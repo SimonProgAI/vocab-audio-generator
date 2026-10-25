@@ -8,18 +8,23 @@ import axios, {
 import type { JobStatus, Voice } from "../types/queue";
 import { primaryLanguage } from "../utils/voices";
 import { wait } from "../utils/wait";
+import { currentApiKey } from "./apiKey";
 
 /** Public TTS.ai host. Result URLs that point here are rerouted through API_ORIGIN. */
 const TTS_UPSTREAM_ORIGIN = "https://api.tts.ai";
 const API_ORIGIN = (import.meta.env.VITE_TTS_API_ORIGIN || "/tts-api").replace(/\/+$/, "");
-const API_KEY = (import.meta.env.VITE_TTS_API_KEY ?? "").trim();
 
-export const isApiKeyConfigured = API_KEY.length > 0;
+export function hasApiKey(): boolean {
+  return currentApiKey() !== "";
+}
 
-const apiClient = axios.create({
-  baseURL: `${API_ORIGIN}/v1`,
-  timeout: 30_000,
-  headers: isApiKeyConfigured ? { Authorization: `Bearer ${API_KEY}` } : {},
+const apiClient = axios.create({ baseURL: `${API_ORIGIN}/v1`, timeout: 30_000 });
+
+// Read on every request, so a key entered (or forgotten) on the page applies right away.
+apiClient.interceptors.request.use((config) => {
+  const key = currentApiKey();
+  if (key) config.headers.set("Authorization", `Bearer ${key}`);
+  return config;
 });
 
 // Result files are plain downloads: no auth header, longer timeout.
@@ -86,9 +91,9 @@ function fromAxiosError(error: AxiosError): TtsApiError {
   if (status === 401) {
     return answered(
       "auth",
-      isApiKeyConfigured
-        ? "TTS.ai rejected your API key. Check VITE_TTS_API_KEY in your .env file, then restart the app."
-        : "TTS.ai needs an API key for this. Add VITE_TTS_API_KEY to your .env file, then restart the app.",
+      hasApiKey()
+        ? "TTS.ai rejected your API key. Check the key in the TTS.ai API key box at the top of the page."
+        : "TTS.ai needs an API key for this. Enter yours in the TTS.ai API key box at the top of the page.",
     );
   }
   if (status === 429) {

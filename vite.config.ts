@@ -14,6 +14,9 @@ const ttsProxy: Record<string, ProxyOptions> = {
 };
 
 export default defineConfig({
+  // Relative asset paths, so the build also works from a subfolder such as GitHub Pages'
+  // /vocab-audio-generator/.
+  base: "./",
   plugins: [react(), tailwindcss()],
   server: { proxy: ttsProxy },
   preview: { proxy: ttsProxy },

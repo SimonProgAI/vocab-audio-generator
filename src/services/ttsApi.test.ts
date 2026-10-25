@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { server } from "../test/server";
 import type { Voice } from "../types/queue";
 import { wait } from "../utils/wait";
+import { forgetApiKey, saveApiKey } from "./apiKey";
 import { downloadAudio, getJobStatus, getVoices, submitJob } from "./ttsApi";
 
 // Retries happen instantly; the delays they asked for are still recorded on the mock.
@@ -49,6 +50,21 @@ describe("getVoices", () => {
     );
     await getVoices();
     expect(authorization).toBe("Bearer test-key");
+  });
+
+  it("sends the key entered on the page instead, and the built-in one again once it's forgotten", async () => {
+    const seen: Array<string | null> = [];
+    server.use(
+      http.get(`${API}/voices/`, ({ request }) => {
+        seen.push(request.headers.get("authorization"));
+        return HttpResponse.json([]);
+      }),
+    );
+    saveApiKey("sk-visitor-1234", false);
+    await getVoices();
+    forgetApiKey();
+    await getVoices();
+    expect(seen).toEqual(["Bearer sk-visitor-1234", "Bearer test-key"]);
   });
 
   it("keys voices by model:id, drops duplicates and bad entries, and sorts them", async () => {

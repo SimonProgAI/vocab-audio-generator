@@ -30,6 +30,7 @@ const PIPER = "piper:fr_FR-siwis-medium";
 
 beforeEach(() => {
   sessionStorage.clear();
+  localStorage.clear();
   clearAudioCache();
   clearVoiceSamples();
   // jsdom can't play audio, make object URLs, or follow a download link.
@@ -596,5 +597,47 @@ describe("audio memory", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove row 2" }));
 
     expect(vi.mocked(retainAudio).mock.lastCall?.[0]).toEqual(new Set([FILE]));
+  });
+});
+
+describe("API key box", () => {
+  it("uses the key a visitor enters, keeps it after a reload, and Reset leaves it alone", async () => {
+    const auth: Array<string | null> = [];
+    server.use(
+      http.get(`${API}/voices/`, ({ request }) => {
+        auth.push(request.headers.get("authorization"));
+        return HttpResponse.json({ voices: [{ id: "fr_FR-siwis-medium", model: "piper", name: "Siwis", language: "fr" }] });
+      }),
+    );
+    const view = render(<App />);
+    await screen.findByText(/1 voice loaded/);
+    expect(screen.getByText(/VITE_TTS_API_KEY/)).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Use my own key" }));
+    fireEvent.change(screen.getByLabelText("TTS.ai API key"), { target: { value: "sk-visitor-1234" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save key" }));
+    view.unmount();
+    render(<App />);
+    await screen.findByText(/1 voice loaded/);
+
+    expect(auth).toEqual(["Bearer test-key", "Bearer sk-visitor-1234"]);
+    expect(screen.getByText("••••1234")).not.toBeNull();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(screen.getByText("••••1234")).not.toBeNull();
+  });
+
+  it("goes back to the built-in key when the visitor's key is forgotten", async () => {
+    await openApp();
+    fireEvent.click(screen.getByRole("button", { name: "Use my own key" }));
+    fireEvent.change(screen.getByLabelText("TTS.ai API key"), { target: { value: "sk-visitor-1234" } });
+    fireEvent.click(screen.getByLabelText("Remember on this device"));
+    fireEvent.click(screen.getByRole("button", { name: "Save key" }));
+    expect(screen.getByText(/remembered on this device/)).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Forget" }));
+
+    expect(screen.getByText(/VITE_TTS_API_KEY/)).not.toBeNull();
+    expect(localStorage.length).toBe(0);
   });
 });

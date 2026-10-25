@@ -4,13 +4,18 @@ Batch-generate MP3 vocabulary recordings with the [TTS.ai](https://tts.ai/api) A
 Paste a word list, choose how voices are assigned, click **Generate All**, and download
 each file or the whole set as `vocabulary_audio.zip`.
 
+Live version: <https://simonprogai.github.io/vocab-audio-generator/>. Bring your own TTS.ai
+API key: enter it in the box at the top of the page.
+
 ## Setup
 
 ```bash
 npm install
-cp .env.example .env      # then set VITE_TTS_API_KEY
-npm run dev               # http://localhost:5173
+npm run dev               # http://localhost:5173, then enter your key in the page
 ```
+
+Or, for local development only, put the key in `.env` (`cp .env.example .env`, then set
+`VITE_TTS_API_KEY`) so you don't have to enter it.
 
 | Script                     | What it does                                                   |
 | -------------------------- | -------------------------------------------------------------- |
@@ -24,15 +29,16 @@ npm run dev               # http://localhost:5173
 
 ## Environment
 
-| Variable              | Required | Default    | Notes                                                                 |
-| --------------------- | -------- | ---------- | --------------------------------------------------------------------- |
-| `VITE_TTS_API_KEY`    | Yes\*    | none       | \*Without it TTS.ai only allows limited anonymous use of free models. |
-| `VITE_TTS_API_ORIGIN` | No       | `/tts-api` | `/tts-api` is the Vite proxy to `https://api.tts.ai` (avoids CORS).   |
+| Variable              | Required | Default    | Notes                                                                |
+| --------------------- | -------- | ---------- | -------------------------------------------------------------------- |
+| `VITE_TTS_API_KEY`    | No       | none       | Local development only. Used when no key was entered in the page.    |
+| `VITE_TTS_API_ORIGIN` | No       | `/tts-api` | `/tts-api` is the Vite dev/preview proxy to `https://api.tts.ai`.    |
 
 **Security:** `VITE_*` variables are compiled into the JavaScript bundle, so anyone who can
-open the built site can read the key. That's fine for running locally. For a shared deployment,
-put a reverse proxy in front of TTS.ai that adds the `Authorization` header on the server, and
-point `VITE_TTS_API_ORIGIN` at it.
+open the built site can read them. Never build a public copy with `VITE_TTS_API_KEY` set; the
+GitHub Pages workflow forces it empty. Visitors enter their own key instead, which stays in their
+browser and is only sent to TTS.ai. TTS.ai accepts browser requests from any site (checked
+2026-10-25), so a hosted build calls `https://api.tts.ai` directly and needs no proxy.
 
 ## How it works
 
@@ -67,6 +73,10 @@ src/
 - **Filenames**: `slugify` strips accents (`une rivière` → `une_riviere`), turns spaces and
   punctuation into `_`, and removes `/ \ : * ? " < > |`. Duplicate names in the ZIP get `_2`,
   `_3`, and so on.
+- **API key**: the box at the top keeps the visitor's key for the current tab (sessionStorage),
+  or on the device with **Remember** (localStorage), and `services/apiKey.ts` reads it for every
+  request. **Forget** removes it; **Reset** leaves it alone. Without one, the built-in
+  `VITE_TTS_API_KEY` is used (local development), else TTS.ai's limited anonymous access.
 - **Session persistence**: the queue, the Bulk Import text (even before it's added), the
   settings and the credit count are saved to `sessionStorage` (`services/session.ts`) and
   restored on load, so a refresh or back navigation keeps them. Saving waits until changes pause
@@ -134,6 +144,16 @@ asks before submitting anything. `--dry-run` stops after the estimate. Needs Nod
 - Results go to `benchmark-results/` (git-ignored): a `.csv` summary and a `.jsonl` with every
   run, reused ones included, appended as it finishes with TTS.ai's last status reply.
 
+## Deploying to GitHub Pages
+
+`.github/workflows/deploy-pages.yml` tests, builds and publishes the site on every push to
+`main`, to `https://<user>.github.io/<repo>/` (asset paths are relative, so any repo name works).
+One-time setup: in the repository's **Settings → Pages**, set **Source** to **GitHub Actions**.
+
+The build sets `VITE_TTS_API_ORIGIN=https://api.tts.ai` and an empty `VITE_TTS_API_KEY`, so no
+key ships with the site. A key a visitor ticks **Remember** for is kept in `localStorage` for
+`<user>.github.io`, which every Pages site of that GitHub account shares.
+
 ## Known issues
 
 - **Slow speakers**: some speakers take an excessively long time to generate files.
@@ -144,3 +164,7 @@ asks before submitting anything. `--dry-run` stops after the estimate. Needs Nod
 ## TODO
 
 Nothing open right now.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

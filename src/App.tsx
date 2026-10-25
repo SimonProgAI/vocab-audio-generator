@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ApiKeySettings } from "./components/ApiKeySettings";
 import { BulkImport } from "./components/BulkImport";
 import { Button } from "./components/Button";
 import { Notice, type NoticeContent } from "./components/Notice";
@@ -21,7 +22,8 @@ import {
   type ZipProgress,
 } from "./services/download";
 import { loadSession, type RestoredSession, type SessionSnapshot } from "./services/session";
-import { getErrorMessage, isApiKeyConfigured, type SubmittedJob } from "./services/ttsApi";
+import { BUILT_IN_API_KEY, forgetApiKey, loadApiKey, saveApiKey } from "./services/apiKey";
+import { getErrorMessage, type SubmittedJob } from "./services/ttsApi";
 import { clearVoiceSamples, loadVoiceSample } from "./services/voiceSample";
 import type { QueueItem, SpeakerConfig, Voice } from "./types/queue";
 import { NO_CREDITS_USED, recordCredits, type CreditUsage } from "./utils/credits";
@@ -103,6 +105,7 @@ export default function App() {
   );
   const generation = useGeneration(actions.applyProgress, recordSubmitted);
   const { current: playback, play, stop: stopPlayback } = useAudioPlayer();
+  const [apiKey, setApiKey] = useState(loadApiKey);
 
   const [config, setConfig] = useState<SpeakerConfig>(saved?.settings.config ?? DEFAULT_CONFIG);
   const [globalSpeed, setGlobalSpeed] = useState(saved?.settings.globalSpeed ?? DEFAULT_SPEED);
@@ -256,6 +259,18 @@ export default function App() {
     }
   };
 
+  // The key isn't part of the work, so Reset leaves it alone; Forget is the way to remove it.
+  const handleSaveKey = (key: string, remember: boolean) => {
+    saveApiKey(key, remember);
+    setApiKey(loadApiKey());
+    if (voiceLibrary.status === "error") voiceLibrary.reload();
+  };
+
+  const handleForgetKey = () => {
+    forgetApiKey();
+    setApiKey(undefined);
+  };
+
   const handleClear = () => {
     if (window.confirm(`Remove all ${pluralize(items.length, "file")} from the queue?`)) {
       actions.clear();
@@ -315,15 +330,12 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-7xl space-y-6 px-6 py-6">
-        {!isApiKeyConfigured && (
-          <Notice
-            tone="warning"
-            title="No TTS.ai API key configured"
-            messages={[
-              "Copy .env.example to .env, set VITE_TTS_API_KEY, and restart the dev server. Without a key, TTS.ai only allows limited anonymous use.",
-            ]}
-          />
-        )}
+        <ApiKeySettings
+          saved={apiKey}
+          hasBuiltInKey={BUILT_IN_API_KEY !== ""}
+          onSave={handleSaveKey}
+          onForget={handleForgetKey}
+        />
 
         <BulkImport draft={draft} onDraftChange={setDraft} onAdd={actions.addTexts} />
 
