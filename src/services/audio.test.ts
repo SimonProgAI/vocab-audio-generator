@@ -1,7 +1,7 @@
 import { http, HttpResponse } from "msw/http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { server } from "../test/server";
-import { clearAudioCache, isExpiredAudioError, loadAudio } from "./audio";
+import { clearAudioCache, isExpiredAudioError, loadAudio, retainAudio } from "./audio";
 import { TtsApiError } from "./ttsApi";
 
 // Retries happen instantly.
@@ -68,12 +68,28 @@ describe("loadAudio", () => {
   });
 });
 
+describe("retainAudio", () => {
+  it("forgets every file except the ones still in use", async () => {
+    const other = "https://cdn.tts.ai/job-2/tts_output.mp3";
+    const kept = serve(FILE, mp3);
+    const dropped = serve(other, mp3);
+    await Promise.all([loadAudio(FILE), loadAudio(other)]);
+
+    retainAudio(new Set([FILE]));
+    await Promise.all([loadAudio(FILE), loadAudio(other)]);
+
+    expect(kept.calls).toBe(1);
+    expect(dropped.calls).toBe(2);
+  });
+});
+
 describe("isExpiredAudioError", () => {
-  it.each([403, 404, 410])("treats HTTP %d as an expired link", (status) => {
+  it.each([404, 410])("treats HTTP %d as an expired link", (status) => {
     expect(isExpiredAudioError(new TtsApiError("request", "Gone", undefined, status))).toBe(true);
   });
 
-  it("doesn't treat other failures as expired", () => {
+  it("doesn't treat other failures as expired, including a 403 that may be temporary", () => {
+    expect(isExpiredAudioError(new TtsApiError("request", "Refused", undefined, 403))).toBe(false);
     expect(isExpiredAudioError(new TtsApiError("server", "Down", undefined, 500))).toBe(false);
     expect(isExpiredAudioError(new TtsApiError("network", "Offline"))).toBe(false);
     expect(isExpiredAudioError(new Error("Something else"))).toBe(false);

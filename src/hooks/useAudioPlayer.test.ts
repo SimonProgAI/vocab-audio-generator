@@ -132,6 +132,48 @@ describe("useAudioPlayer", () => {
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:clip-1");
   });
 
+  it("tells a slow load to stop when the clip is stopped or replaced", async () => {
+    const { result } = renderHook(() => useAudioPlayer());
+    const signals: AbortSignal[] = [];
+    const slowLoad = (signal: AbortSignal) => {
+      signals.push(signal);
+      return new Promise<Blob>(() => undefined);
+    };
+
+    act(() => void result.current.play("row-1", slowLoad));
+    act(() => void result.current.play("row-2", slowLoad));
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+
+    act(() => result.current.stop());
+    expect(signals[1]?.aborted).toBe(true);
+  });
+
+  it.each(["pause", "error"])("clears when the clip fires %s, e.g. from media keys or a broken file", async (event) => {
+    const { result } = renderHook(() => useAudioPlayer());
+    await act(() => result.current.play("row-1", async () => clip));
+
+    act(() => {
+      playedElement().dispatchEvent(new Event(event));
+    });
+
+    expect(result.current.current).toBeNull();
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:clip-1");
+  });
+
+  it("ignores the pause its own stop causes on a clip it already replaced", async () => {
+    const { result } = renderHook(() => useAudioPlayer());
+    await act(() => result.current.play("row-1", async () => clip));
+    const first = playedElement(0);
+    await act(() => result.current.play("row-2", async () => clip));
+
+    act(() => {
+      first.dispatchEvent(new Event("pause"));
+    });
+
+    expect(result.current.current).toEqual({ id: "row-2", state: "playing" });
+  });
+
   it("stops playing when the page goes away", async () => {
     const { result, unmount } = renderHook(() => useAudioPlayer());
     await act(() => result.current.play("row-1", async () => clip));

@@ -2,6 +2,7 @@ import { http, HttpResponse } from "msw/http";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { server } from "../test/server";
 import type { Voice } from "../types/queue";
+import { wait } from "../utils/wait";
 import { clearAudioCache } from "./audio";
 import { SAMPLE_TEXT, clearVoiceSamples, loadVoiceSample } from "./voiceSample";
 
@@ -16,20 +17,22 @@ const melo: Voice = { key: "melotts:FR", id: "FR", name: "French", language: "fr
 /** A TTS.ai that accepts sample jobs and answers status polls with `statuses` in turn. */
 function fakeTtsAi(...statuses: object[]) {
   const submitted: unknown[] = [];
+  const polledJobs: Array<string | null> = [];
   let polls = 0;
   server.use(
     http.post(`${API}/tts/`, async ({ request }) => {
       submitted.push(await request.json());
       return HttpResponse.json({ uuid: `sample-${submitted.length}`, status: "queued", credits_used: 16, credits_remaining: 1000 });
     }),
-    http.get(`${API}/speech/results/`, () => {
+    http.get(`${API}/speech/results/`, ({ request }) => {
+      polledJobs.push(new URL(request.url).searchParams.get("uuid"));
       const reply = statuses[Math.min(polls, statuses.length - 1)] ?? {};
       polls += 1;
       return HttpResponse.json(reply);
     }),
     http.get(SAMPLE_URL, () => new HttpResponse(new Uint8Array([0xff, 0xfb, 0x90]), { headers: { "Content-Type": "audio/mpeg" } })),
   );
-  return { submitted, polls: () => polls };
+  return { submitted, polledJobs, polls: () => polls };
 }
 
 const DONE = { status: "completed", result_url: SAMPLE_URL };
@@ -44,7 +47,7 @@ describe("loadVoiceSample", () => {
     const tts = fakeTtsAi({ status: "processing" }, DONE);
     const onSubmitted = vi.fn();
 
-    const audio = await loadVoiceSample(siwis, onSubmitted);
+    const audio = await loadVoiceSample(siwis, { onSubmitted });
 
     expect(audio.size).toBe(3);
     expect(tts.submitted).toEqual([
@@ -59,8 +62,8 @@ describe("loadVoiceSample", () => {
   it("makes each voice's sample only once per session", async () => {
     const tts = fakeTtsAi(DONE);
     const onSubmitted = vi.fn();
-    const first = await loadVoiceSample(siwis, onSubmitted);
-    const second = await loadVoiceSample(siwis, onSubmitted);
+    const first = await loadVoiceSample(siwis, { onSubmitted });
+    const second = await loadVoiceSample(siwis, { onSubmitted });
     expect(second).toBe(first);
     expect(tts.submitted).toHaveLength(1);
     expect(onSubmitted).toHaveBeenCalledTimes(1);
@@ -89,5 +92,51 @@ describe("loadVoiceSample", () => {
   it("fails right away when TTS.ai rejects the sample job", async () => {
     server.use(http.post(`${API}/tts/`, () => HttpResponse.json({ uuid: "sample-1", status: "failed" })));
     await expect(loadVoiceSample(siwis)).rejects.toThrow("TTS.ai couldn't make a sample of Siwis.");
+  });
+});
+
+describe("stopping a sample", () => {
+  it("stops checking on the job, and a later request checks on the same job without paying again", async () => {
+    const tts = fakeTtsAi({ status: "processing" });
+    const controller = new AbortController();
+    vi.mocked(wait).mockImplementationOnce(async () => {
+      controller.abort();
+    });
+
+    await expect(loadVoiceSample(siwis, { signal: controller.signal })).rejects.toMatchObject({ kind: "aborted" });
+    expect(tts.polls()).toBe(1);
+
+    fakeTtsAi(DONE);
+    const onSubmitted = vi.fn();
+    await expect(loadVoiceSample(siwis, { onSubmitted })).resolves.toHaveProperty("size", 3);
+    expect(tts.submitted).toHaveLength(1);
+    expect(onSubmitted).not.toHaveBeenCalled();
+  });
+
+  it("checks on the remembered job by its ID", async () => {
+    const tts = fakeTtsAi({ status: "processing" });
+    const controller = new AbortController();
+    vi.mocked(wait).mockImplementationOnce(async () => {
+      controller.abort();
+    });
+    await loadVoiceSample(siwis, { signal: controller.signal }).catch(() => undefined);
+
+    const again = fakeTtsAi(DONE);
+    await loadVoiceSample(siwis);
+    expect([...tts.polledJobs, ...again.polledJobs]).toEqual(["sample-1", "sample-1"]);
+  });
+
+  it("forgets unfinished jobs when samples are cleared, as Reset does", async () => {
+    const tts = fakeTtsAi({ status: "processing" });
+    const controller = new AbortController();
+    vi.mocked(wait).mockImplementationOnce(async () => {
+      controller.abort();
+    });
+    await loadVoiceSample(siwis, { signal: controller.signal }).catch(() => undefined);
+
+    clearVoiceSamples();
+    const again = fakeTtsAi(DONE);
+    await loadVoiceSample(siwis);
+    expect(tts.submitted.length + again.submitted.length).toBe(2);
   });
 });

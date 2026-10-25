@@ -2,10 +2,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { QueueItem } from "../types/queue";
 import { clearAudioCache, loadAudio } from "./audio";
-import { downloadItem, isDownloadable, toMp3Name } from "./download";
-import { downloadAudio } from "./ttsApi";
+import { downloadAllCompleted, downloadItem, isDownloadable, toMp3Name } from "./download";
+import { TtsApiError, downloadAudio } from "./ttsApi";
 
-vi.mock("./ttsApi", () => ({ downloadAudio: vi.fn() }));
+vi.mock("./ttsApi", async (importOriginal) => ({ ...(await importOriginal<object>()), downloadAudio: vi.fn() }));
 
 const audio = new Blob([new Uint8Array([0xff, 0xfb, 0x90])], { type: "audio/mpeg" });
 
@@ -107,5 +107,52 @@ describe("downloadItem", () => {
     await expect(downloadItem(completed)).rejects.toBe(error);
     expect(URL.createObjectURL).not.toHaveBeenCalled();
     expect(saved).toEqual([]);
+  });
+});
+
+describe("downloadAllCompleted", () => {
+  const second: QueueItem = { ...completed, id: "row-2", filename: "un_champ", downloadUrl: "https://cdn.tts.ai/job-2/tts_output.mp3" };
+  const gone = new TtsApiError("request", "Not found", undefined, 404);
+
+  beforeEach(() => {
+    vi.mocked(downloadAudio).mockReset();
+    clearAudioCache();
+    URL.createObjectURL = vi.fn(() => "blob:zip");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("saves the files it could fetch and reports the expired ones", async () => {
+    vi.mocked(downloadAudio).mockImplementation((url) => (url === second.downloadUrl ? Promise.reject(gone) : Promise.resolve(audio)));
+
+    const result = await downloadAllCompleted([completed, second]);
+
+    expect(result).toEqual({
+      added: 1,
+      skipped: ["un_champ.mp3"],
+      expired: [{ id: "row-2", url: "https://cdn.tts.ai/job-2/tts_output.mp3" }],
+    });
+    expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't call other failures expired", async () => {
+    vi.mocked(downloadAudio).mockImplementation((url) =>
+      url === second.downloadUrl ? Promise.reject(new TtsApiError("network", "Offline")) : Promise.resolve(audio),
+    );
+    await expect(downloadAllCompleted([completed, second])).resolves.toMatchObject({ added: 1, expired: [] });
+  });
+
+  it("saves nothing when no file could be fetched, but still reports the expired ones", async () => {
+    vi.mocked(downloadAudio).mockRejectedValue(gone);
+
+    const result = await downloadAllCompleted([completed, second]);
+
+    expect(result.added).toBe(0);
+    expect(result.expired.map((entry) => entry.id)).toEqual(["row-1", "row-2"]);
+    expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
   });
 });

@@ -32,7 +32,7 @@ export interface RestoredSession {
   draft: string;
   /** Only the settings that were saved and valid; the app uses its defaults for the rest. */
   settings: Partial<SessionSettings>;
-  /** Rows that were still generating when the page went away, now back to Pending. */
+  /** Rows that were still generating when the page went away; the app checks on their jobs again. */
   interrupted: number;
   /** Undefined when nothing valid was saved. */
   credits?: CreditUsage;
@@ -174,13 +174,17 @@ function parseSettings(value: unknown): Partial<SessionSettings> {
   return settings;
 }
 
+function isGenerating(item: QueueItem): boolean {
+  return item.status === "queued" || item.status === "processing";
+}
+
 /**
- * Polling stopped with the old page, so rows that were queued or processing start over as Pending.
- * Resubmitting is cheap once the old job has finished: TTS.ai answers an identical request with the
- * existing audio, without charging again (seen in `npm run benchmark:voices`).
+ * Rows that were queued or processing keep their job ID, so the app can check on the same TTS.ai
+ * job again instead of submitting (and paying for) a new one while the old one may still be
+ * running. A row without a job ID or speaker can't be picked up and starts over as Pending.
  */
-function restartInterrupted(item: QueueItem): QueueItem {
-  return item.status === "queued" || item.status === "processing"
+function restoreInterrupted(item: QueueItem): QueueItem {
+  return isGenerating(item) && (!item.jobId || !item.speaker)
     ? { ...item, status: "pending", jobId: undefined }
     : item;
 }
@@ -195,8 +199,8 @@ export function parseSession(data: unknown): RestoredSession | undefined {
     const item = parseItem(value);
     if (!item || ids.has(item.id)) continue;
     ids.add(item.id);
-    const restored = restartInterrupted(item);
-    if (restored !== item) interrupted += 1;
+    const restored = restoreInterrupted(item);
+    if (isGenerating(restored)) interrupted += 1;
     items.push(restored);
   }
   const draft = typeof data.draft === "string" ? data.draft : "";

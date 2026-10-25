@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { memo, useId } from "react";
 import type { VoiceLoadStatus } from "../hooks/useVoices";
 import type { AssignmentMode, SpeakerConfig, Voice } from "../types/queue";
 import { pluralize } from "../utils/format";
@@ -59,7 +59,7 @@ function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
   return next;
 }
 
-export function SpeakerSettings({
+function SpeakerSettingsComponent({
   voiceStatus,
   voiceError,
   onRetryVoices,
@@ -92,11 +92,14 @@ export function SpeakerSettings({
         : [...config.selectedVoices, voiceKey],
     });
 
+  // In the order the list shows them, so a round robin follows what's on screen.
   const selectAllShown = () =>
     update({
       selectedVoices: [
         ...config.selectedVoices,
-        ...voices.map((voice) => voice.key).filter((key) => !config.selectedVoices.includes(key)),
+        ...arrangeVoices(voices, voiceOrder)
+          .flatMap((group) => group.voices.map((voice) => voice.key))
+          .filter((key) => !config.selectedVoices.includes(key)),
       ],
     });
 
@@ -297,6 +300,9 @@ export function SpeakerSettings({
     </Section>
   );
 }
+
+// Memoized so typing in Bulk Import, which re-renders App, doesn't re-render every voice list.
+export const SpeakerSettings = memo(SpeakerSettingsComponent);
 
 interface VoiceChecklistProps {
   voices: Voice[];

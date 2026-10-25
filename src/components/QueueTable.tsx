@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { Playback } from "../hooks/useAudioPlayer";
 import { previewSpeaker } from "../services/assignment";
 import type { QueueItem, QueueItemEdit, SpeakerConfig, Voice } from "../types/queue";
@@ -60,7 +61,7 @@ function sampleVoiceFor(
   return speakerKey ? voicesByKey.get(speakerKey) : undefined;
 }
 
-export function QueueTable({
+function QueueTableComponent({
   items,
   config,
   voices,
@@ -139,3 +140,6 @@ export function QueueTable({
     </Section>
   );
 }
+
+// Memoized so typing in Bulk Import, which re-renders App, doesn't re-render the queue.
+export const QueueTable = memo(QueueTableComponent);

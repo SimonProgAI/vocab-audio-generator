@@ -2,6 +2,8 @@ import { http, HttpResponse } from "msw/http";
 import { describe, expect, it } from "vitest";
 import { server } from "../src/test/server";
 import {
+  DEFAULT_TEXTS,
+  measureVoice,
   median,
   parseVoices,
   runJob,
@@ -183,12 +185,80 @@ describe("median", () => {
   });
 });
 
+
+describe("reused audio", () => {
+  const reused = () =>
+    HttpResponse.json({
+      uuid: "old",
+      status: "completed",
+      result_url: "https://cdn.tts.ai/old/tts_output.mp3",
+      credits_used: 0,
+      cached: true,
+    });
+
+  it("doesn't time a reply with audio TTS.ai already had", async () => {
+    acceptSubmits(reused);
+    // No status handler: polling would fail the test.
+    const run = await runJob(voice, "une rivière", 1, options);
+    expect(run).toMatchObject({ outcome: "reused", text: "une rivière", creditsUsed: 0 });
+    expect(run.elapsedMs).toBeUndefined();
+  });
+
+  it("treats a free reply as reused even without the cached flag", async () => {
+    acceptSubmits(() => HttpResponse.json({ uuid: "old", status: "completed", credits_used: 0 }));
+    await expect(runJob(voice, "une rivière", 1, options)).resolves.toMatchObject({ outcome: "reused" });
+  });
+
+  it("moves on to the voice's next phrase until one is really generated", async () => {
+    const submits = acceptSubmits(reused, () => HttpResponse.json({ uuid: "new", credits_used: 11 }));
+    statuses(DONE);
+    const used = new Map<string, number>();
+    const seen: RunResult[] = [];
+
+    const run = await measureVoice(voice, 1, ["une rivière", "la montagne", "un escalier"], used, options, (attempt) =>
+      seen.push(attempt),
+    );
+
+    expect(run).toMatchObject({ outcome: "completed", text: "la montagne", creditsUsed: 11 });
+    expect(seen.map((attempt) => [attempt.text, attempt.outcome])).toEqual([
+      ["une rivière", "reused"],
+      ["la montagne", "completed"],
+    ]);
+    expect(submits.map((request) => (request.body as { text: string }).text)).toEqual(["une rivière", "la montagne"]);
+    expect(used.get(voice.key)).toBe(2);
+  });
+
+  it("starts each round where the voice's last one stopped", async () => {
+    const submits = acceptSubmits();
+    statuses(DONE);
+    const used = new Map([[voice.key, 2]]);
+    await measureVoice(voice, 2, ["une rivière", "la montagne", "un escalier"], used, options);
+    expect(submits.map((request) => (request.body as { text: string }).text)).toEqual(["un escalier"]);
+  });
+
+  it("says so when every phrase was already generated, without sending anything", async () => {
+    const used = new Map([[voice.key, 1]]);
+    await expect(measureVoice(voice, 2, ["une rivière"], used, options)).resolves.toMatchObject({
+      outcome: "reused",
+      text: "",
+      error: expect.stringContaining("Pass new ones with --text"),
+    });
+  });
+
+  it("ships phrases that are all different and all 11 characters long", () => {
+    expect(new Set(DEFAULT_TEXTS).size).toBe(DEFAULT_TEXTS.length);
+    expect(DEFAULT_TEXTS.map((text) => [...text].length)).toEqual(DEFAULT_TEXTS.map(() => 11));
+  });
+});
+
 describe("summarize", () => {
+  const TIMEOUT = 120_000;
   const run = (key: string, outcome: RunResult["outcome"], extra: Partial<RunResult> = {}): RunResult => ({
     key,
     name: key,
     model: key.split(":")[0] ?? "",
     round: 1,
+    text: "une rivière",
     outcome,
     rateLimited: 0,
     ...extra,
@@ -200,49 +270,82 @@ describe("summarize", () => {
       run("slow:a", "completed", { elapsedMs: 3000, creditsUsed: 22, queuedMs: 300 }),
       run("slow:a", "completed", { elapsedMs: 2000, creditsUsed: 22, queuedMs: 200 }),
       run("broken:c", "failed", { error: "Voice crashed" }),
-      run("fast:b", "completed", { elapsedMs: 500, creditsUsed: 11 }),
+      run("fast:b", "reused", { creditsUsed: 0 }),
+      run("fast:b", "completed", { elapsedMs: 500, creditsUsed: 11, text: "la montagne" }),
       run("broken:c", "failed", { error: "Voice crashed" }),
-      run("fast:b", "timeout", { error: "Not finished after 120 s." }),
+      run("fast:b", "reused", { creditsUsed: 0, elapsedMs: undefined }),
+      run("flaky:d", "completed", { elapsedMs: 800, creditsUsed: 22 }),
+      run("flaky:d", "timeout", { error: "Not finished after 120 s.", creditsUsed: 22 }),
+      run("flaky:d", "timeout", { error: "Not finished after 120 s.", creditsUsed: 22 }),
+      run("spent:e", "reused", { text: "", error: "TTS.ai already had audio for every test phrase with this voice." }),
     ],
-    11,
+    TIMEOUT,
   );
 
-  it("ranks voices by median time and puts voices that never finished last", () => {
-    expect(summaries.map((summary) => summary.key)).toEqual(["fast:b", "slow:a", "broken:c"]);
+  it("ranks by median time, with timeouts counted as the timeout, and puts unmeasured voices last", () => {
+    expect(summaries.map((summary) => summary.key)).toEqual(["fast:b", "slow:a", "flaky:d", "broken:c", "spent:e"]);
   });
 
-  it("summarizes each voice's runs, problems and credits per character", () => {
-    expect(summaries).toEqual([
-      expect.objectContaining({
-        key: "fast:b",
-        runs: 2,
-        completed: 1,
-        medianMs: 500,
-        creditsPerChar: 1,
-        problems: ["timeout: Not finished after 120 s."],
-      }),
-      expect.objectContaining({
-        key: "slow:a",
-        runs: 3,
-        completed: 3,
-        medianMs: 2000,
-        minMs: 1000,
-        maxMs: 3000,
-        medianQueuedMs: 200,
-        creditsPerChar: 2,
-        problems: [],
-      }),
-      expect.objectContaining({ key: "broken:c", completed: 0, medianMs: undefined, problems: ["failed: Voice crashed (×2)"] }),
-    ]);
+  it("leaves reused runs out of the timing and the credits per character", () => {
+    expect(summaries[0]).toMatchObject({
+      key: "fast:b",
+      runs: 1,
+      completed: 1,
+      reused: 2,
+      medianMs: 500,
+      medianIsLowerBound: false,
+      creditsPerChar: 1,
+      problems: [],
+    });
+  });
+
+  it("summarizes finished runs", () => {
+    expect(summaries[1]).toMatchObject({
+      key: "slow:a",
+      runs: 3,
+      completed: 3,
+      timeouts: 0,
+      medianMs: 2000,
+      minMs: 1000,
+      maxMs: 3000,
+      medianQueuedMs: 200,
+      creditsPerChar: 2,
+      problems: [],
+    });
+  });
+
+  it("marks a median that includes timeouts as a lower bound", () => {
+    expect(summaries[2]).toMatchObject({
+      key: "flaky:d",
+      runs: 3,
+      completed: 1,
+      timeouts: 2,
+      medianMs: TIMEOUT,
+      medianIsLowerBound: true,
+      minMs: 800,
+      maxMs: 800,
+      creditsPerChar: 2,
+      problems: ["timeout: Not finished after 120 s. (×2)"],
+    });
+  });
+
+  it("lists failures, and voices with no phrases left", () => {
+    expect(summaries[3]).toMatchObject({ key: "broken:c", completed: 0, medianMs: undefined, problems: ["failed: Voice crashed (×2)"] });
+    expect(summaries[4]).toMatchObject({
+      key: "spent:e",
+      runs: 0,
+      reused: 0,
+      problems: ["TTS.ai already had audio for every test phrase with this voice."],
+    });
   });
 
   it("writes a CSV with quoted cells where needed", () => {
-    const broken = summaries[2];
-    if (!broken) throw new Error("Expected three summaries.");
+    const broken = summaries[3];
+    if (!broken) throw new Error("Expected a summary for broken:c.");
     const csv = toCsv([{ ...broken, name: 'Le "grand", lui' }]);
     expect(csv).toBe(
-      "rank,name,voice,model,median_s,min_s,max_s,completed,runs,queued_median_s,credits_per_char,problems\n" +
-        '1,"Le ""grand"", lui",broken:c,broken,,,,0,2,,,failed: Voice crashed (×2)\n',
+      "rank,name,voice,model,median_s,median_is_lower_bound,min_s,max_s,completed,timeouts,runs,reused,queued_median_s,credits_per_char,problems\n" +
+        '1,"Le ""grand"", lui",broken:c,broken,,false,,,0,0,2,0,,,failed: Voice crashed (×2)\n',
     );
   });
 });

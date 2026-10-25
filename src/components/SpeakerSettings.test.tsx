@@ -13,6 +13,7 @@ const voices: Voice[] = [
 
 function renderSettings(voiceOrder: VoiceOrder, config: SpeakerConfig = { mode: "random", selectedVoices: [] }) {
   const onVoiceOrderChange = vi.fn();
+  const onConfigChange = vi.fn();
   render(
     <SpeakerSettings
       voiceStatus="ready"
@@ -25,20 +26,20 @@ function renderSettings(voiceOrder: VoiceOrder, config: SpeakerConfig = { mode: 
       voiceOrder={voiceOrder}
       onVoiceOrderChange={onVoiceOrderChange}
       config={config}
-      onConfigChange={vi.fn()}
+      onConfigChange={onConfigChange}
       globalSpeed={1}
       onGlobalSpeedChange={vi.fn()}
       disabled={false}
     />,
   );
-  return onVoiceOrderChange;
+  return { onVoiceOrderChange, onConfigChange };
 }
 
 afterEach(cleanup);
 
 describe("SpeakerSettings voice sorting", () => {
   it("reports the chosen order", () => {
-    const onVoiceOrderChange = renderSettings("name");
+    const { onVoiceOrderChange } = renderSettings("name");
     fireEvent.change(screen.getByLabelText("Sort voices"), { target: { value: "tier" } });
     expect(onVoiceOrderChange).toHaveBeenCalledWith("tier");
   });
@@ -59,6 +60,24 @@ describe("SpeakerSettings voice sorting", () => {
     renderSettings("name");
     expect(screen.queryByText("Free tier · 1 credit per character")).toBeNull();
     expect(screen.getAllByRole("checkbox")).toHaveLength(3);
+  });
+
+  it("selects all shown voices in the order the list shows them", () => {
+    const { onConfigChange } = renderSettings("tier", { mode: "roundRobin", selectedVoices: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Select all shown" }));
+    expect(onConfigChange).toHaveBeenCalledWith({
+      mode: "roundRobin",
+      selectedVoices: ["piper:siwis", "melotts:FR", "openvoice:FR"],
+    });
+  });
+
+  it("keeps already selected voices first when selecting all", () => {
+    const { onConfigChange } = renderSettings("tier", { mode: "roundRobin", selectedVoices: ["openvoice:FR"] });
+    fireEvent.click(screen.getByRole("button", { name: "Select all shown" }));
+    expect(onConfigChange).toHaveBeenCalledWith({
+      mode: "roundRobin",
+      selectedVoices: ["openvoice:FR", "piper:siwis", "melotts:FR"],
+    });
   });
 
   it("groups the single-speaker picker too", () => {

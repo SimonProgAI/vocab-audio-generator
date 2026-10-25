@@ -88,6 +88,36 @@ describe("queueReducer", () => {
   });
 });
 
+describe("queueReducer expire", () => {
+  const url = "https://cdn.tts.ai/job-1/tts_output.mp3";
+  const done = (overrides: Partial<QueueItem> = {}): QueueItem => ({ ...first(add("bonjour")), ...completed, downloadUrl: url, ...overrides });
+
+  it("fails a row whose link expired and forgets the link", () => {
+    const row = done();
+    const [expired] = queueReducer([row], { type: "expire", id: row.id, url, error: "Expired." });
+    expect(expired).toMatchObject({ status: "failed", error: "Expired." });
+    expect(expired?.downloadUrl).toBeUndefined();
+    expect(expired?.generatedWith).toBeUndefined();
+    expect(expired?.jobId).toBeUndefined();
+  });
+
+  it("leaves a row alone when it has a different link by now, e.g. after regenerating", () => {
+    const row = done({ downloadUrl: "https://cdn.tts.ai/job-2/tts_output.mp3" });
+    expect(queueReducer([row], { type: "expire", id: row.id, url, error: "Expired." })).toEqual([row]);
+  });
+
+  it("leaves a row alone while it is being regenerated", () => {
+    const row = done({ status: "queued", downloadUrl: undefined, jobId: "job-2" });
+    expect(queueReducer([row], { type: "expire", id: row.id, url, error: "Expired." })).toEqual([row]);
+  });
+
+  it("only touches the given row", () => {
+    const row = done();
+    const other = { ...done(), id: "other" };
+    expect(queueReducer([row, other], { type: "expire", id: row.id, url, error: "Expired." })[1]).toBe(other);
+  });
+});
+
 describe("computeStats", () => {
   it("counts rows by status", () => {
     const [a, b, c] = add("a", "b", "c");

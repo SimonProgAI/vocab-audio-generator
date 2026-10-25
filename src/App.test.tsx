@@ -3,11 +3,27 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { http, HttpResponse } from "msw/http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
-import { EXPIRED_AUDIO_MESSAGE, clearAudioCache } from "./services/audio";
+import { previewSpeaker } from "./services/assignment";
+import { EXPIRED_AUDIO_MESSAGE, clearAudioCache, retainAudio } from "./services/audio";
 import { SESSION_KEY, saveSession, type SessionSnapshot } from "./services/session";
 import { clearVoiceSamples } from "./services/voiceSample";
 import { server } from "./test/server";
 import type { QueueItem } from "./types/queue";
+import { arrangeVoices } from "./utils/voices";
+
+// Wrapped, not replaced: each is called whenever the queue or the speaker lists render.
+vi.mock("./services/assignment", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./services/assignment")>();
+  return { ...actual, previewSpeaker: vi.fn(actual.previewSpeaker) };
+});
+vi.mock("./services/audio", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./services/audio")>();
+  return { ...actual, retainAudio: vi.fn(actual.retainAudio) };
+});
+vi.mock("./utils/voices", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./utils/voices")>();
+  return { ...actual, arrangeVoices: vi.fn(actual.arrangeVoices) };
+});
 
 const API = `${import.meta.env.VITE_TTS_API_ORIGIN}/v1`;
 const PIPER = "piper:fr_FR-siwis-medium";
@@ -141,16 +157,61 @@ describe("session persistence", () => {
     expect(screen.getByLabelText("Filename, row 1")).toHaveProperty("value", "un_grand_champ");
   });
 
-  it("puts a row that was generating back to Pending after a reload", async () => {
+  it("checks on a generating row's job again after a reload, instead of paying for a new one", async () => {
     const view = await openApp();
     addWords("un champ");
-    await startGenerating();
+    let submits = 0;
+    server.use(
+      http.post(`${API}/tts/`, () => {
+        submits += 1;
+        return HttpResponse.json({ uuid: "job-1", status: "queued" });
+      }),
+      http.get(`${API}/speech/results/`, () => HttpResponse.json({ status: "processing" })),
+    );
+    fireEvent.change(screen.getByLabelText("Speaker for every file"), { target: { value: PIPER } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate All" }));
+    await queueRow(1).findByText("Queued");
 
+    // The old page goes away; on the new one, TTS.ai reports the same job finished on the second check.
+    const polled: Array<string | null> = [];
+    server.use(
+      http.get(`${API}/speech/results/`, ({ request }) => {
+        polled.push(new URL(request.url).searchParams.get("uuid"));
+        return HttpResponse.json(
+          polled.length < 2
+            ? { status: "processing" }
+            : { status: "completed", result_url: "https://cdn.tts.ai/job-1/tts_output.mp3" },
+        );
+      }),
+    );
     await reload(view);
 
-    expect(queueRow(1).getByText("Pending")).not.toBeNull();
-    expect(queueRow(1).queryByText("Queued")).toBeNull();
-    expect(screen.getByText(/1 file that was still generating is back to Pending/)).not.toBeNull();
+    expect(queueRow(1).queryByText("Pending")).toBeNull();
+    expect(screen.getByText(/1 file was still generating. The app is checking on that job again/)).not.toBeNull();
+    expect(await queueRow(1).findByText("Completed", {}, { timeout: 5000 })).not.toBeNull();
+    expect(await screen.findByText("1 file generated", {}, { timeout: 5000 })).not.toBeNull();
+    expect(submits).toBe(1);
+    expect(new Set(polled)).toEqual(new Set(["job-1"]));
+  });
+
+  it("keeps the speed a picked-up job was sent with", async () => {
+    saveSession({
+      items: [savedRow({ status: "processing", jobId: "job-1", speaker: PIPER })],
+      draft: "",
+      settings: { config: { mode: "single", singleSpeaker: PIPER, selectedVoices: [] }, globalSpeed: 1.5, languageChoice: null, voiceOrder: "name" },
+      credits: { used: 0 },
+    });
+    server.use(
+      http.get(`${API}/speech/results/`, () =>
+        HttpResponse.json({ status: "completed", result_url: "https://cdn.tts.ai/job-1/tts_output.mp3" }),
+      ),
+    );
+    const view = await openApp();
+    await queueRow(1).findByText("Completed");
+    view.unmount();
+
+    const saved = JSON.parse(sessionStorage.getItem(SESSION_KEY) ?? "{}") as { items: QueueItem[] };
+    expect(saved.items[0]?.generatedWith).toEqual({ speaker: PIPER, speed: 1.5 });
   });
 
   it("restores completed rows with their download button", async () => {
@@ -412,6 +473,34 @@ describe("audio preview", () => {
     expect(queueRow(1).queryByRole("button", { name: action })).toBeNull();
   });
 
+  it("leaves the row alone when the file server refuses (403), which may be temporary", async () => {
+    serveFile(() => HttpResponse.json({}, { status: 403 }));
+    saveQueue([completedRow]);
+    await openApp();
+
+    fireEvent.click(queueRow(1).getByRole("button", { name: "Play" }));
+
+    expect(await screen.findByText("Couldn't play un_champ.mp3")).not.toBeNull();
+    expect(queueRow(1).getByText("Completed")).not.toBeNull();
+    expect(queueRow(1).getByRole("button", { name: "Play" })).not.toBeNull();
+  });
+
+  it("marks files with expired links Failed when building the ZIP, and saves the rest", async () => {
+    const other = "https://cdn.tts.ai/job-2/tts_output.mp3";
+    serveFile();
+    server.use(http.get(other, () => HttpResponse.json({}, { status: 410 })));
+    saveQueue([completedRow, { ...completedRow, id: "row-2", text: "une rivière", filename: "une_riviere", downloadUrl: other }]);
+    await openApp();
+
+    fireEvent.click(screen.getByRole("button", { name: /Download All \(ZIP\)/ }));
+
+    expect(await screen.findByText("vocabulary_audio.zip saved with 1 file")).not.toBeNull();
+    expect(screen.getByText(/1 file had an expired audio link and is now marked Failed/)).not.toBeNull();
+    expect(queueRow(2).getByText("Failed")).not.toBeNull();
+    expect(queueRow(1).getByText("Completed")).not.toBeNull();
+    expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1);
+  });
+
   it("samples the voice a pending row will get, and counts the sample's credits", async () => {
     const submitted: unknown[] = [];
     server.use(
@@ -451,5 +540,61 @@ describe("audio preview", () => {
 
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:clip");
+  });
+});
+
+describe("typing in Bulk Import", () => {
+  it("doesn't re-render the queue or the speaker lists", async () => {
+    saveQueue([savedRow({ id: "a" }), savedRow({ id: "b", text: "une rivière" }), savedRow({ id: "c", text: "un village" })]);
+    await openApp();
+    vi.mocked(previewSpeaker).mockClear();
+    vi.mocked(arrangeVoices).mockClear();
+
+    for (const draft of ["u", "un", "une", "une f"]) {
+      fireEvent.change(screen.getByLabelText("Vocabulary list"), { target: { value: draft } });
+    }
+
+    expect(screen.getByLabelText("Vocabulary list")).toHaveProperty("value", "une f");
+    expect(previewSpeaker).not.toHaveBeenCalled();
+    expect(arrangeVoices).not.toHaveBeenCalled();
+  });
+});
+
+describe("Reset and voice samples", () => {
+  it("forgets voice samples, so the next one is made again", async () => {
+    let submits = 0;
+    server.use(
+      http.post(`${API}/tts/`, () => {
+        submits += 1;
+        return HttpResponse.json({ uuid: `sample-${submits}`, status: "queued", credits_used: 16 });
+      }),
+      http.get(`${API}/speech/results/`, () => HttpResponse.json({ status: "completed", result_url: FILE })),
+    );
+    serveFile();
+    saveQueue([savedRow({})]);
+    await openApp();
+    fireEvent.click(queueRow(1).getByRole("button", { name: "Sample" }));
+    await waitUntilPlaying();
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    addWords("un champ");
+    fireEvent.change(screen.getByLabelText("Speaker for every file"), { target: { value: PIPER } });
+    fireEvent.click(queueRow(1).getByRole("button", { name: "Sample" }));
+
+    await waitFor(() => expect(submits).toBe(2));
+  });
+});
+
+describe("audio memory", () => {
+  it("tells the audio cache which files rows still link to, so removed rows free theirs", async () => {
+    const other = "https://cdn.tts.ai/job-2/tts_output.mp3";
+    saveQueue([completedRow, { ...completedRow, id: "row-2", text: "une rivière", filename: "une_riviere", downloadUrl: other }]);
+    await openApp();
+    expect(vi.mocked(retainAudio).mock.lastCall?.[0]).toEqual(new Set([FILE, other]));
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove row 2" }));
+
+    expect(vi.mocked(retainAudio).mock.lastCall?.[0]).toEqual(new Set([FILE]));
   });
 });

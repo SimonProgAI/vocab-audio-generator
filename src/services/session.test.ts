@@ -127,19 +127,28 @@ describe("parseSession", () => {
     }
   });
 
-  it("puts rows that were still generating back to Pending, keeping their speaker", () => {
+  it("keeps rows that were still generating with their job, so the app can check on it again", () => {
+    const items = [
+      row({ id: "a", status: "queued", jobId: "job-a", speaker: "piper:siwis" }),
+      row({ id: "b", status: "processing", jobId: "job-b", speaker: "piper:siwis" }),
+      row({ id: "c", status: "completed", jobId: "job-c", downloadUrl: "https://cdn.tts.ai/c.mp3" }),
+    ];
+    const restored = parseSession({ items });
+    expect(restored?.interrupted).toBe(2);
+    expect(restored?.items).toEqual(items);
+  });
+
+  it("restarts a generating row that has no job ID or speaker to pick up", () => {
     const restored = parseSession({
       items: [
-        row({ id: "a", status: "queued", jobId: "job-a", speaker: "piper:siwis" }),
+        row({ id: "a", status: "queued", speaker: "piper:siwis" }),
         row({ id: "b", status: "processing", jobId: "job-b" }),
-        row({ id: "c", status: "completed", jobId: "job-c", downloadUrl: "https://cdn.tts.ai/c.mp3" }),
       ],
     });
-    expect(restored?.interrupted).toBe(2);
+    expect(restored?.interrupted).toBe(0);
     expect(restored?.items).toEqual([
       row({ id: "a", status: "pending", speaker: "piper:siwis" }),
       row({ id: "b", status: "pending" }),
-      row({ id: "c", status: "completed", jobId: "job-c", downloadUrl: "https://cdn.tts.ai/c.mp3" }),
     ]);
   });
 

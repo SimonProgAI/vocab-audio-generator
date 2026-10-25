@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BulkImport } from "./components/BulkImport";
 import { Button } from "./components/Button";
 import { Notice, type NoticeContent } from "./components/Notice";
@@ -7,11 +7,12 @@ import { QueueTable } from "./components/QueueTable";
 import { SpeakerSettings } from "./components/SpeakerSettings";
 import { Toolbar } from "./components/Toolbar";
 import { useAudioPlayer } from "./hooks/useAudioPlayer";
-import { type GenerationSummary, useGeneration } from "./hooks/useGeneration";
+import { useSessionSaver } from "./hooks/useSessionSaver";
+import { type GenerationSummary, type ResumedJob, useGeneration } from "./hooks/useGeneration";
 import { useQueue } from "./hooks/useQueue";
 import { useVoices } from "./hooks/useVoices";
 import { isUpToDate, planGeneration } from "./services/assignment";
-import { EXPIRED_AUDIO_MESSAGE, isExpiredAudioError, loadAudio } from "./services/audio";
+import { EXPIRED_AUDIO_MESSAGE, isExpiredAudioError, loadAudio, retainAudio } from "./services/audio";
 import {
   ZIP_FILENAME,
   downloadAllCompleted,
@@ -19,13 +20,13 @@ import {
   toMp3Name,
   type ZipProgress,
 } from "./services/download";
-import { loadSession, saveSession, type RestoredSession } from "./services/session";
+import { loadSession, type RestoredSession, type SessionSnapshot } from "./services/session";
 import { getErrorMessage, isApiKeyConfigured, type SubmittedJob } from "./services/ttsApi";
-import { loadVoiceSample } from "./services/voiceSample";
+import { clearVoiceSamples, loadVoiceSample } from "./services/voiceSample";
 import type { QueueItem, SpeakerConfig, Voice } from "./types/queue";
 import { NO_CREDITS_USED, recordCredits, type CreditUsage } from "./utils/credits";
 import { pluralize } from "./utils/format";
-import { DEFAULT_SPEED } from "./utils/speed";
+import { DEFAULT_SPEED, effectiveSpeed } from "./utils/speed";
 import { defaultLanguage, matchesLanguage, summarizeLanguages, type VoiceOrder } from "./utils/voices";
 
 function summarizeRun({ completed, failed, stoppedByUser, fatalError }: GenerationSummary): NoticeContent {
@@ -65,7 +66,7 @@ function restoredNotice(session: RestoredSession | undefined): NoticeContent | n
       `Your ${pluralize(items.length, "file")} and settings were kept when the page reloaded.`,
       ...(interrupted > 0
         ? [
-            `${pluralize(interrupted, "file")} that ${interrupted === 1 ? "was" : "were"} still generating ${interrupted === 1 ? "is" : "are"} back to Pending. Click Generate All to finish ${interrupted === 1 ? "it" : "them"}.`,
+            `${pluralize(interrupted, "file")} ${interrupted === 1 ? "was" : "were"} still generating. The app is checking on ${interrupted === 1 ? "that job" : "those jobs"} again instead of paying for new ones.`,
           ]
         : []),
     ],
@@ -73,6 +74,22 @@ function restoredNotice(session: RestoredSession | undefined): NoticeContent | n
 }
 
 const DEFAULT_CONFIG: SpeakerConfig = { mode: "single", selectedVoices: [] };
+
+/** Restored rows that were generating, as jobs to poll again (see parseSession). */
+function resumableJobs(items: readonly QueueItem[], globalSpeed: number): ResumedJob[] {
+  return items.flatMap((item): ResumedJob[] =>
+    (item.status === "queued" || item.status === "processing") && item.jobId && item.speaker
+      ? [
+          {
+            itemId: item.id,
+            jobId: item.jobId,
+            status: item.status,
+            generatedWith: { speaker: item.speaker, speed: effectiveSpeed(item, globalSpeed) },
+          },
+        ]
+      : [],
+  );
+}
 
 export default function App() {
   // Read once: the queue and settings from before a reload in this tab, if any.
@@ -93,11 +110,29 @@ export default function App() {
   const [voiceOrder, setVoiceOrder] = useState<VoiceOrder>(saved?.settings.voiceOrder ?? "name");
   const [draft, setDraft] = useState(saved?.draft ?? "");
   const [notice, setNotice] = useState<NoticeContent | null>(() => restoredNotice(saved));
+  // Settings are locked while generating, so the saved speed is the one these jobs were sent with.
+  const [resumable] = useState(() => (saved ? resumableJobs(saved.items, saved.settings.globalSpeed ?? DEFAULT_SPEED) : []));
+  const resumedRef = useRef(false);
+
+  // Pick restored jobs back up once, after the voice list has answered. Waiting also keeps this out
+  // of React's development double mount, whose simulated unmount would abort the run.
+  useEffect(() => {
+    if (resumedRef.current || resumable.length === 0 || voiceLibrary.status === "loading") return;
+    resumedRef.current = true;
+    void generation.run([], resumable).then((summary) => setNotice(summarizeRun(summary)));
+  }, [resumable, voiceLibrary.status, generation.run]);
   const [zipProgress, setZipProgress] = useState<ZipProgress | null>(null);
 
+  const snapshot = useMemo<SessionSnapshot>(
+    () => ({ items, draft, settings: { config, globalSpeed, languageChoice, voiceOrder }, credits }),
+    [items, draft, config, globalSpeed, languageChoice, voiceOrder, credits],
+  );
+  useSessionSaver(snapshot);
+
+  // Keep only the audio files rows still link to; removed, cleared or regenerated rows free theirs.
   useEffect(() => {
-    saveSession({ items, draft, settings: { config, globalSpeed, languageChoice, voiceOrder }, credits });
-  }, [items, draft, config, globalSpeed, languageChoice, voiceOrder, credits]);
+    retainAudio(new Set(items.flatMap((item) => (item.downloadUrl ? [item.downloadUrl] : []))));
+  }, [items]);
 
   const languages = useMemo(() => summarizeLanguages(voiceLibrary.voices), [voiceLibrary.voices]);
   const language = languageChoice ?? defaultLanguage(languages);
@@ -133,14 +168,7 @@ export default function App() {
   const reportAudioError = useCallback(
     (item: QueueItem, action: "download" | "play", error: unknown) => {
       const expired = isExpiredAudioError(error);
-      if (expired) {
-        actions.applyProgress([
-          {
-            id: item.id,
-            changes: { status: "failed", error: EXPIRED_AUDIO_MESSAGE, downloadUrl: undefined, generatedWith: undefined },
-          },
-        ]);
-      }
+      if (expired && item.downloadUrl) actions.expire(item.id, item.downloadUrl, EXPIRED_AUDIO_MESSAGE);
       setNotice({
         tone: "error",
         title: `Couldn't ${action} ${toMp3Name(item.filename)}`,
@@ -177,7 +205,7 @@ export default function App() {
   const handleSample = useCallback(
     async (item: QueueItem, voice: Voice) => {
       try {
-        await play(item.id, () => loadVoiceSample(voice, recordSubmitted));
+        await play(item.id, (signal) => loadVoiceSample(voice, { signal, onSubmitted: recordSubmitted }));
       } catch (error) {
         setNotice({ tone: "error", title: `Couldn't play a sample of ${voice.name}`, messages: [getErrorMessage(error)] });
       }
@@ -193,17 +221,34 @@ export default function App() {
   const handleDownloadAll = async () => {
     try {
       const result = await downloadAllCompleted(items, setZipProgress);
-      setNotice(
-        result.skipped.length > 0
-          ? {
-              tone: "warning",
-              title: `${ZIP_FILENAME} saved with ${pluralize(result.added, "file")}`,
-              messages: [
-                `${pluralize(result.skipped.length, "file")} couldn't be downloaded and ${result.skipped.length === 1 ? "was" : "were"} left out: ${result.skipped.join(", ")}`,
-              ],
-            }
-          : null,
-      );
+      for (const { id, url } of result.expired) actions.expire(id, url, EXPIRED_AUDIO_MESSAGE);
+      const expiredNote =
+        result.expired.length > 0
+          ? [
+              `${pluralize(result.expired.length, "file")} had an expired audio link and ${result.expired.length === 1 ? "is" : "are"} now marked Failed. Click Generate All to make ${result.expired.length === 1 ? "it" : "them"} again.`,
+            ]
+          : [];
+      if (result.added === 0) {
+        setNotice({
+          tone: "error",
+          title: "Couldn't create the ZIP file",
+          messages: [
+            "None of the audio files could be downloaded. Check your connection and try again.",
+            ...expiredNote,
+          ],
+        });
+      } else if (result.skipped.length > 0) {
+        setNotice({
+          tone: "warning",
+          title: `${ZIP_FILENAME} saved with ${pluralize(result.added, "file")}`,
+          messages: [
+            `${pluralize(result.skipped.length, "file")} couldn't be downloaded and ${result.skipped.length === 1 ? "was" : "were"} left out: ${result.skipped.join(", ")}`,
+            ...expiredNote,
+          ],
+        });
+      } else {
+        setNotice(null);
+      }
     } catch (error) {
       setNotice({ tone: "error", title: "Couldn't create the ZIP file", messages: [getErrorMessage(error)] });
     } finally {
@@ -238,6 +283,7 @@ export default function App() {
     setLanguageChoice(null);
     setVoiceOrder("name");
     setCredits(NO_CREDITS_USED);
+    clearVoiceSamples();
     setNotice(null);
   };
 

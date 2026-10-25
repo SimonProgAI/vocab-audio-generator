@@ -67,11 +67,13 @@ src/
 - **Filenames**: `slugify` strips accents (`une rivière` → `une_riviere`), turns spaces and
   punctuation into `_`, and removes `/ \ : * ? " < > |`. Duplicate names in the ZIP get `_2`,
   `_3`, and so on.
-- **Session persistence**: the queue, the Bulk Import text (even before it's added) and the
-  settings are saved to `sessionStorage` (`services/session.ts`) on every change and restored on
-  load, so a refresh or back navigation keeps them. The data belongs to the browser tab and is
-  gone when the tab closes. Saved data is validated field by field; rows that were still
-  generating restart as Pending.
+- **Session persistence**: the queue, the Bulk Import text (even before it's added), the
+  settings and the credit count are saved to `sessionStorage` (`services/session.ts`) and
+  restored on load, so a refresh or back navigation keeps them. Saving waits until changes pause
+  for 250 ms, and happens at once when the page is hidden or reloaded. The data belongs to the
+  browser tab and is gone when the tab closes. Saved data is validated field by field. Rows that
+  were still generating keep their TTS.ai job, and the app checks on those jobs again after the
+  reload instead of submitting (and paying for) new ones.
 - **Reset**: the header's **Reset** button (after a confirmation) empties the queue and the Bulk
   Import box and restores the default settings, so a reload afterwards starts blank.
   **Clear Queue** only removes the files.
@@ -85,12 +87,15 @@ src/
   balance endpoint and sends no `X-RateLimit-*` headers (checked 2026-10-25), so there's no
   per-minute counter. The count is saved with the session and cleared by **Reset**.
 - **Audio preview**: completed rows have **Play**. Each file is fetched once and kept in memory
-  (`services/audio.ts`), so Play, **Download** and the ZIP share it. A link that now answers 403,
-  404 or 410 counts as expired: the row turns Failed, so **Generate All** makes it again. Pending
-  rows have **Sample**: the row's voice says "Bonjour, ça va ?" (`services/voiceSample.ts`). TTS.ai
-  has no preview clips, so a voice's first sample is a short real job (a few credits); it's kept
-  for the session, and TTS.ai answers identical requests again for free. There's no Sample in
-  random mode, where the voice is picked at generation. One clip plays at a time.
+  (`services/audio.ts`) while a row links to it, so Play, **Download** and the ZIP share it. A link
+  that now answers 404 or 410 counts as expired, from any of the three: the row turns Failed (if
+  it still has that link), so **Generate All** makes it again. A 403 is only reported, since it
+  can be temporary. Pending rows have **Sample**: the row's voice says "Bonjour, ça va ?"
+  (`services/voiceSample.ts`). TTS.ai has no preview clips, so a voice's first sample is a short
+  real job (a few credits); it's kept for the session, and TTS.ai answers identical requests again
+  for free. Stopping a sample stops checking on its job; asking again checks on the same job
+  rather than paying for a new one. There's no Sample in random mode, where the voice is picked at
+  generation. One clip plays at a time.
 
 ## Testing
 
@@ -108,20 +113,26 @@ Tests use [Vitest](https://vitest.dev) and sit next to the code they cover (`*.t
 
 ## Benchmarking voices
 
-`npm run benchmark:voices` (in `scripts/`) gives every French voice the same text, times each
-job from submit until a status poll sees it finished, and ranks voices from fastest to slowest.
-It **spends real credits**: it prints the voice list and a cost estimate and asks before
-submitting anything. `--dry-run` stops after the estimate.
+`npm run benchmark:voices` (in `scripts/`) has every French voice say short phrases of the same
+length, times each job from submit until a status poll sees it finished, and ranks voices from
+fastest to slowest. It **spends real credits**: it prints the voice list and a cost estimate and
+asks before submitting anything. `--dry-run` stops after the estimate. Needs Node 22.18+ or 23.6+.
 
+- TTS.ai answers a request it has seen before with the audio it already made, at once and for
+  free. So each run uses the voice's next phrase (16 built in, all 11 characters), and a reply
+  TTS.ai flags as reused isn't timed: the voice moves on to another phrase.
 - Jobs run one at a time, in a new random order each round, so no voice waits behind another.
   The median of `--runs` (default 3) smooths out busy moments and cold starts.
-- Failed and timed-out runs (`--timeout`, default 120 s) are listed separately, not ranked.
-- **Credits/char** is `credits_used` ÷ text length: 1 = free tier, 2 = standard, 4 = premium.
+- A timed-out run (`--timeout`, default 120 s) counts as the timeout in the median, shown as
+  "≥", so voices that often time out rank last. Failures are listed under Problems.
+- **Credits/char** is `credits_used` ÷ phrase length over charged runs: 1 = free tier,
+  2 = standard, 4 = premium.
 - Timings are only as precise as `--poll` (default 1 s), and 429 waits make them less precise.
-- Options: `--text`, `--runs`, `--language` (`fr`, or `all`), `--model piper,melotts`,
-  `--poll`, `--timeout`, `--yes` (skip the prompt), `--dry-run`. Pass them after `--`.
+- Options: `--text` (repeat it to give your own phrases), `--runs`, `--language` (`fr`, or
+  `all`), `--model piper,melotts`, `--poll`, `--timeout`, `--yes` (skip the prompt),
+  `--dry-run`. Pass them after `--`.
 - Results go to `benchmark-results/` (git-ignored): a `.csv` summary and a `.jsonl` with every
-  run, appended as it finishes, including TTS.ai's last status reply.
+  run, reused ones included, appended as it finishes with TTS.ai's last status reply.
 
 ## Known issues
 

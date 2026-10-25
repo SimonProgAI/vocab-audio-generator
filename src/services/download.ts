@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import type { QueueItem } from "../types/queue";
-import { loadAudio } from "./audio";
+import { isExpiredAudioError, loadAudio } from "./audio";
 
 export const ZIP_FILENAME = "vocabulary_audio.zip";
 const ZIP_DOWNLOAD_CONCURRENCY = 4;
@@ -11,9 +11,12 @@ export interface ZipProgress {
 }
 
 export interface ZipResult {
+  /** Files in the saved ZIP. When 0, nothing was saved. */
   added: number;
   /** Filenames that could not be fetched and were left out of the archive. */
   skipped: string[];
+  /** Left-out rows whose audio link has expired, with the link that failed. */
+  expired: Array<{ id: string; url: string }>;
 }
 
 type DownloadableItem = QueueItem & { downloadUrl: string };
@@ -82,24 +85,24 @@ export async function downloadAllCompleted(
 
   const zip = new JSZip();
   const skipped: string[] = [];
+  const expired: ZipResult["expired"] = [];
   let done = 0;
   onProgress?.({ done, total: entries.length });
 
   await forEachWithConcurrency(entries, ZIP_DOWNLOAD_CONCURRENCY, async ({ item, name }) => {
     try {
       zip.file(name, await loadAudio(item.downloadUrl));
-    } catch {
+    } catch (error) {
       skipped.push(name);
+      if (isExpiredAudioError(error)) expired.push({ id: item.id, url: item.downloadUrl });
     } finally {
       done += 1;
       onProgress?.({ done, total: entries.length });
     }
   });
 
-  if (skipped.length === entries.length) {
-    throw new Error("None of the audio files could be downloaded. Check your connection and try again.");
-  }
+  if (skipped.length === entries.length) return { added: 0, skipped, expired };
   // MP3 is already compressed, so JSZip's default STORE mode is the right choice.
   saveBlob(await zip.generateAsync({ type: "blob" }), ZIP_FILENAME);
-  return { added: entries.length - skipped.length, skipped };
+  return { added: entries.length - skipped.length, skipped, expired };
 }

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getJobStatus, submitJob, toTtsApiError, type SubmittedJob, type TtsApiError } from "../services/ttsApi";
-import type { GenerationJob, QueueItemProgress, QueueItemUpdate } from "../types/queue";
+import type { GenerationJob, GenerationSnapshot, QueueItemProgress, QueueItemUpdate } from "../types/queue";
 import { wait } from "../utils/wait";
 
 const POLL_INTERVAL_MS = 1500;
@@ -18,10 +18,16 @@ export interface GenerationSummary {
   fatalError?: string;
 }
 
-interface ActiveJob {
-  job: GenerationJob;
+/** A job TTS.ai already accepted before the page reloaded: polling picks it up again. */
+export interface ResumedJob {
+  itemId: string;
   jobId: string;
   status: "queued" | "processing";
+  /** Speaker and speed the job was submitted with. */
+  generatedWith: GenerationSnapshot;
+}
+
+interface ActiveJob extends ResumedJob {
   submittedAt: number;
   pollFailures: number;
 }
@@ -30,7 +36,8 @@ interface ActiveJob {
  * Runs a batch: submits every job, polls their status concurrently, and reports progress
  * through `applyProgress`. Submission and polling run side by side so early jobs finish
  * while later ones are still being submitted. `onSubmitted` receives TTS.ai's reply to every
- * accepted job (it carries the credits charged).
+ * accepted job (it carries the credits charged). `resumed` jobs were submitted before a reload:
+ * they are only polled, never submitted again, so they aren't paid for twice.
  */
 export function useGeneration(
   applyProgress: (updates: QueueItemUpdate[]) => void,
@@ -44,13 +51,16 @@ export function useGeneration(
   const stop = useCallback(() => controllerRef.current?.abort(), []);
 
   const run = useCallback(
-    async (jobs: GenerationJob[]): Promise<GenerationSummary> => {
+    async (jobs: GenerationJob[], resumed: readonly ResumedJob[] = []): Promise<GenerationSummary> => {
       const controller = new AbortController();
       controllerRef.current = controller;
       const { signal } = controller;
       setIsGenerating(true);
 
-      const active = new Map<string, ActiveJob>();
+      const active = new Map<string, ActiveJob>(
+        resumed.map((job) => [job.itemId, { ...job, submittedAt: Date.now(), pollFailures: 0 }]),
+      );
+      const itemIds = [...jobs.map((job) => job.itemId), ...resumed.map((job) => job.itemId)];
       const finished = new Set<string>();
       let completed = 0;
       let failed = 0;
@@ -88,9 +98,10 @@ export function useGeneration(
             }
             const status = result.status === "processing" ? "processing" : "queued";
             active.set(job.itemId, {
-              job,
+              itemId: job.itemId,
               jobId: result.jobId,
               status,
+              generatedWith: { speaker: job.voice.key, speed: job.speed },
               submittedAt: Date.now(),
               pollFailures: 0,
             });
@@ -109,7 +120,7 @@ export function useGeneration(
       };
 
       const poll = async (entry: ActiveJob) => {
-        const { itemId } = entry.job;
+        const { itemId } = entry;
         try {
           const result = await getJobStatus(entry.jobId, signal);
           entry.pollFailures = 0;
@@ -118,7 +129,7 @@ export function useGeneration(
               finish(itemId, {
                 status: "completed",
                 downloadUrl: result.resultUrl,
-                generatedWith: { speaker: entry.job.voice.key, speed: entry.job.speed },
+                generatedWith: entry.generatedWith,
               });
               return;
             case "failed":
@@ -171,11 +182,9 @@ export function useGeneration(
       try {
         await Promise.all([submitAll(), pollUntilDone()]);
       } finally {
-        const unfinished = jobs.filter((job) => !finished.has(job.itemId));
+        const unfinished = itemIds.filter((id) => !finished.has(id));
         if (unfinished.length > 0) {
-          applyProgress(
-            unfinished.map((job) => ({ id: job.itemId, changes: { status: "pending", jobId: undefined } })),
-          );
+          applyProgress(unfinished.map((id) => ({ id, changes: { status: "pending", jobId: undefined } })));
         }
         if (controllerRef.current === controller) controllerRef.current = null;
         setIsGenerating(false);
@@ -184,7 +193,7 @@ export function useGeneration(
       return {
         completed,
         failed,
-        unfinished: jobs.length - completed - failed,
+        unfinished: itemIds.length - completed - failed,
         stoppedByUser: signal.aborted && fatalError === undefined,
         fatalError,
       };
