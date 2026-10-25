@@ -1,0 +1,248 @@
+import { http, HttpResponse } from "msw/http";
+import { describe, expect, it } from "vitest";
+import { server } from "../src/test/server";
+import {
+  median,
+  parseVoices,
+  runJob,
+  selectVoices,
+  summarize,
+  toCsv,
+  type BenchVoice,
+  type ClientOptions,
+  type RunResult,
+} from "./benchmark-voices";
+
+const ORIGIN = "https://tts.test";
+const options: ClientOptions = { origin: ORIGIN, apiKey: "test-key", pollMs: 5, timeoutMs: 1000 };
+const voice: BenchVoice = {
+  key: "piper:fr_FR-siwis-medium",
+  id: "fr_FR-siwis-medium",
+  name: "Siwis (French)",
+  language: "fr-FR",
+  model: "piper",
+};
+const DONE = { status: "completed", result_url: "https://api.tts.ai/files/a.mp3" };
+
+/** Accepts submits with `replies` in turn (repeating the last), recording each request. */
+function acceptSubmits(...replies: Array<() => Response>) {
+  const requests: Array<{ authorization: string | null; body: unknown }> = [];
+  const respond = replies.length > 0 ? replies : [() => HttpResponse.json({ uuid: "job-1", credits_used: 11, credits_remaining: 14_989 })];
+  server.use(
+    http.post(`${ORIGIN}/v1/tts/`, async ({ request }) => {
+      requests.push({ authorization: request.headers.get("authorization"), body: await request.json() });
+      return (respond[Math.min(requests.length - 1, respond.length - 1)] as () => Response)();
+    }),
+  );
+  return requests;
+}
+
+/** Answers status polls with each reply in turn, repeating the last one. */
+function statuses(...replies: Array<object | (() => Response)>) {
+  let calls = 0;
+  server.use(
+    http.get(`${ORIGIN}/v1/speech/results/`, () => {
+      const reply = replies[Math.min(calls, replies.length - 1)];
+      calls += 1;
+      return typeof reply === "function" ? reply() : HttpResponse.json(reply ?? {});
+    }),
+  );
+}
+
+describe("runJob", () => {
+  it("times a job from submit until a poll sees it completed", async () => {
+    const submits = acceptSubmits();
+    statuses({ status: "queued" }, { status: "processing" }, DONE);
+
+    const result = await runJob(voice, "une rivière", 2, options);
+
+    expect(result).toMatchObject({
+      key: voice.key,
+      round: 2,
+      outcome: "completed",
+      creditsUsed: 11,
+      creditsRemaining: 14_989,
+      rateLimited: 0,
+      lastStatus: DONE,
+    });
+    expect(result.queuedMs).toBeGreaterThan(0);
+    expect(result.elapsedMs).toBeGreaterThan(result.queuedMs ?? Number.POSITIVE_INFINITY);
+    expect(result.precisionMs).toBeGreaterThan(0);
+    expect(submits).toEqual([
+      {
+        authorization: "Bearer test-key",
+        body: { text: "une rivière", voice: "fr_FR-siwis-medium", model: "piper", speed: 1, format: "mp3", language: "fr" },
+      },
+    ]);
+  });
+
+  it("reports a failed job with TTS.ai's message", async () => {
+    acceptSubmits();
+    statuses({ status: "error", message: "Voice crashed" });
+    const result = await runJob(voice, "une rivière", 1, options);
+    expect(result).toMatchObject({ outcome: "failed", error: "Voice crashed" });
+    expect(result.elapsedMs).toBeUndefined();
+  });
+
+  it("counts a completed job without audio as failed", async () => {
+    acceptSubmits();
+    statuses({ status: "done" });
+    await expect(runJob(voice, "une rivière", 1, options)).resolves.toMatchObject({
+      outcome: "failed",
+      error: "Finished without an audio URL.",
+    });
+  });
+
+  it("gives up on a job that runs past the timeout", async () => {
+    acceptSubmits();
+    statuses({ status: "processing" });
+    await expect(runJob(voice, "une rivière", 1, { ...options, timeoutMs: 40 })).resolves.toMatchObject({
+      outcome: "timeout",
+      error: "Not finished after 0.04 s.",
+    });
+  });
+
+  it("never resubmits after a server error, so a job can't be billed twice", async () => {
+    const submits = acceptSubmits(() => HttpResponse.json({ error: "Overloaded" }, { status: 500 }));
+    await expect(runJob(voice, "une rivière", 1, options)).resolves.toMatchObject({
+      outcome: "error",
+      error: "HTTP 500: Overloaded",
+    });
+    expect(submits).toHaveLength(1);
+  });
+
+  it("resubmits after a rate limit, and counts it", async () => {
+    const submits = acceptSubmits(
+      () => HttpResponse.json({}, { status: 429, headers: { "Retry-After": "0" } }),
+      () => HttpResponse.json({ uuid: "job-1" }),
+    );
+    statuses(DONE);
+    await expect(runJob(voice, "une rivière", 1, options)).resolves.toMatchObject({
+      outcome: "completed",
+      rateLimited: 1,
+    });
+    expect(submits).toHaveLength(2);
+  });
+
+  it("retries a status poll that hits a server error", async () => {
+    acceptSubmits();
+    statuses(() => HttpResponse.json({}, { status: 503, headers: { "Retry-After": "0" } }), DONE);
+    await expect(runJob(voice, "une rivière", 1, options)).resolves.toMatchObject({ outcome: "completed" });
+  });
+
+  it("fails when the submit reply has no job ID", async () => {
+    acceptSubmits(() => HttpResponse.json({ status: "queued" }));
+    await expect(runJob(voice, "une rivière", 1, options)).resolves.toMatchObject({
+      outcome: "error",
+      error: "TTS.ai accepted the job but didn't return a job ID.",
+    });
+  });
+});
+
+describe("parseVoices and selectVoices", () => {
+  const voices = parseVoices({
+    voices: [
+      { id: "FR", model: "openvoice", name: "French", language: "fr" },
+      { id: "fr_FR-siwis-medium", model: "piper", name: "Siwis (French)", language: "fr-FR" },
+      { id: "FR", model: "melotts", name: "French", language: "fr" },
+      { id: "FR", model: "melotts", name: "Duplicate", language: "fr" },
+      { id: "en_1", model: "bark", name: "English Male 1", language: "en" },
+      { id: "no-model", name: "No model", language: "fr" },
+      "not a voice",
+    ],
+  });
+
+  it("keys voices by model:id and drops duplicates and entries without an id or model", () => {
+    expect(voices.map((v) => v.key)).toEqual(["openvoice:FR", "piper:fr_FR-siwis-medium", "melotts:FR", "bark:en_1"]);
+  });
+
+  it("filters by primary language and model, sorted by model", () => {
+    expect(selectVoices(voices, "fr", []).map((v) => v.key)).toEqual([
+      "melotts:FR",
+      "openvoice:FR",
+      "piper:fr_FR-siwis-medium",
+    ]);
+    expect(selectVoices(voices, "FR", ["piper", "bark"]).map((v) => v.key)).toEqual(["piper:fr_FR-siwis-medium"]);
+    expect(selectVoices(voices, "all", [])).toHaveLength(4);
+  });
+
+  it("accepts a bare array too", () => {
+    expect(parseVoices([{ id: "FR", model: "melotts" }])).toEqual([
+      { key: "melotts:FR", id: "FR", name: "FR", language: "", model: "melotts" },
+    ]);
+  });
+});
+
+describe("median", () => {
+  it.each([
+    [[], undefined],
+    [[3, 1, 2], 2],
+    [[4, 1, 3, 2], 2.5],
+  ])("%j → %j", (values, expected) => {
+    expect(median(values)).toBe(expected);
+  });
+});
+
+describe("summarize", () => {
+  const run = (key: string, outcome: RunResult["outcome"], extra: Partial<RunResult> = {}): RunResult => ({
+    key,
+    name: key,
+    model: key.split(":")[0] ?? "",
+    round: 1,
+    outcome,
+    rateLimited: 0,
+    ...extra,
+  });
+
+  const summaries = summarize(
+    [
+      run("slow:a", "completed", { elapsedMs: 1000, creditsUsed: 22, queuedMs: 100 }),
+      run("slow:a", "completed", { elapsedMs: 3000, creditsUsed: 22, queuedMs: 300 }),
+      run("slow:a", "completed", { elapsedMs: 2000, creditsUsed: 22, queuedMs: 200 }),
+      run("broken:c", "failed", { error: "Voice crashed" }),
+      run("fast:b", "completed", { elapsedMs: 500, creditsUsed: 11 }),
+      run("broken:c", "failed", { error: "Voice crashed" }),
+      run("fast:b", "timeout", { error: "Not finished after 120 s." }),
+    ],
+    11,
+  );
+
+  it("ranks voices by median time and puts voices that never finished last", () => {
+    expect(summaries.map((summary) => summary.key)).toEqual(["fast:b", "slow:a", "broken:c"]);
+  });
+
+  it("summarizes each voice's runs, problems and credits per character", () => {
+    expect(summaries).toEqual([
+      expect.objectContaining({
+        key: "fast:b",
+        runs: 2,
+        completed: 1,
+        medianMs: 500,
+        creditsPerChar: 1,
+        problems: ["timeout: Not finished after 120 s."],
+      }),
+      expect.objectContaining({
+        key: "slow:a",
+        runs: 3,
+        completed: 3,
+        medianMs: 2000,
+        minMs: 1000,
+        maxMs: 3000,
+        medianQueuedMs: 200,
+        creditsPerChar: 2,
+        problems: [],
+      }),
+      expect.objectContaining({ key: "broken:c", completed: 0, medianMs: undefined, problems: ["failed: Voice crashed (×2)"] }),
+    ]);
+  });
+
+  it("writes a CSV with quoted cells where needed", () => {
+    const broken = summaries[2];
+    if (!broken) throw new Error("Expected three summaries.");
+    const csv = toCsv([{ ...broken, name: 'Le "grand", lui' }]);
+    expect(csv).toBe(
+      "rank,name,voice,model,median_s,min_s,max_s,completed,runs,queued_median_s,credits_per_char,problems\n" +
+        '1,"Le ""grand"", lui",broken:c,broken,,,,0,2,,,failed: Voice crashed (×2)\n',
+    );
+  });
+});

@@ -89,8 +89,9 @@ export interface QueueActions {
   applyProgress: (updates: QueueItemUpdate[]) => void;
 }
 
-export function useQueue() {
-  const [items, dispatch] = useReducer(queueReducer, []);
+/** `initialItems` seeds the queue on first render, e.g. rows restored after a reload. */
+export function useQueue(initialItems: readonly QueueItem[] = []) {
+  const [items, dispatch] = useReducer(queueReducer, initialItems, (initial) => [...initial]);
   const stats = useMemo(() => computeStats(items), [items]);
   const actions = useMemo<QueueActions>(
     () => ({

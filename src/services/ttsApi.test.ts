@@ -136,6 +136,13 @@ describe("getVoices", () => {
     expect(counter.calls).toBe(1);
   });
 
+  it("keeps the HTTP status on errors, and none when TTS.ai never answered", async () => {
+    sequence("get", `${API}/voices/`, status(404));
+    await expect(getVoices()).rejects.toMatchObject({ kind: "request", status: 404 });
+    sequence("get", `${API}/voices/`, () => HttpResponse.error());
+    await expect(getVoices()).rejects.toMatchObject({ kind: "network", status: undefined });
+  });
+
   it("reports a cancelled request as aborted", async () => {
     server.use(http.get(`${API}/voices/`, () => HttpResponse.json([])));
     const controller = new AbortController();
@@ -158,6 +165,46 @@ describe("submitJob", () => {
       status: "queued",
     });
     expect(body).toEqual({ text: "bonjour", voice: "FR", model: "melotts", speed: 1.2, format: "mp3", language: "fr" });
+  });
+
+  it("reads the credits TTS.ai charged and the balance it reports", async () => {
+    server.use(
+      http.post(`${API}/tts/`, () =>
+        HttpResponse.json({ uuid: "job-1", status: "queued", credits_used: 22, credits_remaining: 14_978 }),
+      ),
+    );
+    await expect(submitJob({ text: "bonjour", voice, speed: 1 })).resolves.toEqual({
+      jobId: "job-1",
+      status: "queued",
+      creditsUsed: 22,
+      creditsRemaining: 14_978,
+    });
+  });
+
+  it("reads a reply for audio TTS.ai already had: done at once, free, and without a balance", async () => {
+    server.use(
+      http.post(`${API}/tts/`, () =>
+        HttpResponse.json({
+          uuid: "job-2",
+          status: "completed",
+          result_url: "https://cdn.tts.ai/job-2/tts_output.mp3",
+          credits_used: 0,
+          cached: true,
+        }),
+      ),
+    );
+    const job = await submitJob({ text: "bonjour", voice, speed: 1 });
+    expect(job).toEqual({ jobId: "job-2", status: "completed", creditsUsed: 0 });
+    expect(job.creditsRemaining).toBeUndefined();
+  });
+
+  it("ignores credit fields that aren't numbers", async () => {
+    server.use(
+      http.post(`${API}/tts/`, () => HttpResponse.json({ uuid: "job-3", credits_used: "11", credits_remaining: null })),
+    );
+    const job = await submitJob({ text: "bonjour", voice, speed: 1 });
+    expect(job.creditsUsed).toBeUndefined();
+    expect(job.creditsRemaining).toBeUndefined();
   });
 
   it("leaves out the language when the voice has none", async () => {

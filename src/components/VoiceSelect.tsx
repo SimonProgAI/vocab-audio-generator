@@ -1,11 +1,13 @@
+import { Fragment } from "react";
 import type { Voice } from "../types/queue";
-import { formatVoiceLabel } from "../utils/voices";
+import { arrangeVoices, formatVoiceLabel, type VoiceOrder } from "../utils/voices";
 import { FIELD_CLASS } from "./fieldStyles";
 
 interface VoiceSelectProps {
   id?: string;
   voices: Voice[];
   voicesByKey: ReadonlyMap<string, Voice>;
+  order: VoiceOrder;
   value: string | undefined;
   onChange: (voiceKey: string) => void;
   placeholder: string;
@@ -13,10 +15,19 @@ interface VoiceSelectProps {
   ariaLabel?: string;
 }
 
+function renderOption(voice: Voice) {
+  return (
+    <option key={voice.key} value={voice.key}>
+      {formatVoiceLabel(voice)}
+    </option>
+  );
+}
+
 export function VoiceSelect({
   id,
   voices,
   voicesByKey,
+  order,
   value,
   onChange,
   placeholder,
@@ -40,11 +51,15 @@ export function VoiceSelect({
       <option value="" disabled>
         {placeholder}
       </option>
-      {options.map((voice) => (
-        <option key={voice.key} value={voice.key}>
-          {formatVoiceLabel(voice)}
-        </option>
-      ))}
+      {arrangeVoices(options, order).map((group) =>
+        group.label ? (
+          <optgroup key={group.key} label={group.label}>
+            {group.voices.map(renderOption)}
+          </optgroup>
+        ) : (
+          <Fragment key={group.key}>{group.voices.map(renderOption)}</Fragment>
+        ),
+      )}
     </select>
   );
 }

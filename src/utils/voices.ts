@@ -52,3 +52,61 @@ export function formatVoiceLabel(voice: Voice): string {
 export function voiceName(voiceKey: string, voicesByKey: ReadonlyMap<string, Voice>): string {
   return voicesByKey.get(voiceKey)?.name ?? voiceKey;
 }
+
+/** TTS.ai price tiers: free models use 1 credit per character of text, standard 2, premium 4. */
+export type VoiceTier = "free" | "standard" | "premium" | "unknown";
+
+/**
+ * The voice list has no pricing field, so tiers are mapped per model. Measured from `credits_used`
+ * in `npm run benchmark:voices` (French voices, 2026-10-25); vits, tortoise and chatterbox come from
+ * https://tts.ai/api. The docs list kokoro as standard, but it was charged 1 credit per character.
+ */
+const MODEL_TIERS: ReadonlyMap<string, Exclude<VoiceTier, "unknown">> = new Map([
+  ["kokoro", "free"],
+  ["melotts", "free"],
+  ["piper", "free"],
+  ["pocket-tts", "free"],
+  ["vits", "free"],
+  ["bark", "standard"],
+  ["bark-small", "standard"],
+  ["cosyvoice2", "standard"],
+  ["cosyvoice3", "standard"],
+  ["moss-tts-nano", "standard"],
+  ["qwen3-tts", "standard"],
+  ["chatterbox", "premium"],
+  ["openvoice", "premium"],
+  ["tortoise", "premium"],
+]);
+
+const TIER_LABELS: Readonly<Record<VoiceTier, string>> = {
+  free: "Free tier · 1 credit per character",
+  standard: "Standard · 2 credits per character",
+  premium: "Premium · 4 credits per character",
+  unknown: "Price not known yet",
+};
+
+const TIER_ORDER: readonly VoiceTier[] = ["free", "standard", "premium", "unknown"];
+
+export function voiceTier(voice: Pick<Voice, "model">): VoiceTier {
+  return (voice.model && MODEL_TIERS.get(voice.model)) || "unknown";
+}
+
+/** How every speaker list is ordered: alphabetically, or grouped by price tier (cheapest first). */
+export type VoiceOrder = "name" | "tier";
+
+export interface VoiceGroup {
+  key: string;
+  /** Heading for the group; undefined when the list isn't grouped. */
+  label?: string;
+  voices: Voice[];
+}
+
+/** Keeps the incoming (alphabetical) order within each group. Empty tiers are left out. */
+export function arrangeVoices(voices: readonly Voice[], order: VoiceOrder): VoiceGroup[] {
+  if (order === "name") return [{ key: "all", voices: [...voices] }];
+  return TIER_ORDER.map((tier) => ({
+    key: tier,
+    label: TIER_LABELS[tier],
+    voices: voices.filter((voice) => voiceTier(voice) === tier),
+  })).filter((group) => group.voices.length > 0);
+}

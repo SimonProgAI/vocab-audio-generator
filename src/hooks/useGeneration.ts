@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getJobStatus, submitJob, toTtsApiError, type TtsApiError } from "../services/ttsApi";
+import { getJobStatus, submitJob, toTtsApiError, type SubmittedJob, type TtsApiError } from "../services/ttsApi";
 import type { GenerationJob, QueueItemProgress, QueueItemUpdate } from "../types/queue";
 import { wait } from "../utils/wait";
 
@@ -29,9 +29,13 @@ interface ActiveJob {
 /**
  * Runs a batch: submits every job, polls their status concurrently, and reports progress
  * through `applyProgress`. Submission and polling run side by side so early jobs finish
- * while later ones are still being submitted.
+ * while later ones are still being submitted. `onSubmitted` receives TTS.ai's reply to every
+ * accepted job (it carries the credits charged).
  */
-export function useGeneration(applyProgress: (updates: QueueItemUpdate[]) => void) {
+export function useGeneration(
+  applyProgress: (updates: QueueItemUpdate[]) => void,
+  onSubmitted?: (job: SubmittedJob) => void,
+) {
   const [isGenerating, setIsGenerating] = useState(false);
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -77,6 +81,7 @@ export function useGeneration(applyProgress: (updates: QueueItemUpdate[]) => voi
           if (signal.aborted) break;
           try {
             const result = await submitJob(job, signal);
+            onSubmitted?.(result);
             if (result.status === "failed") {
               fail(job.itemId, "TTS.ai rejected this job.");
               continue;
@@ -184,7 +189,7 @@ export function useGeneration(applyProgress: (updates: QueueItemUpdate[]) => voi
         fatalError,
       };
     },
-    [applyProgress],
+    [applyProgress, onSubmitted],
   );
 
   return { isGenerating, run, stop };

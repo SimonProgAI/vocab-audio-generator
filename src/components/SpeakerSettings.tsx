@@ -10,7 +10,14 @@ import {
   formatSpeed,
   roundSpeed,
 } from "../utils/speed";
-import { ALL_LANGUAGES, formatVoiceLabel, voiceName, type LanguageSummary } from "../utils/voices";
+import {
+  ALL_LANGUAGES,
+  arrangeVoices,
+  formatVoiceLabel,
+  voiceName,
+  type LanguageSummary,
+  type VoiceOrder,
+} from "../utils/voices";
 import { Button } from "./Button";
 import { FIELD_CLASS } from "./fieldStyles";
 import { Notice } from "./Notice";
@@ -28,6 +35,8 @@ interface SpeakerSettingsProps {
   languages: LanguageSummary[];
   language: string;
   onLanguageChange: (language: string) => void;
+  voiceOrder: VoiceOrder;
+  onVoiceOrderChange: (order: VoiceOrder) => void;
   config: SpeakerConfig;
   onConfigChange: (config: SpeakerConfig) => void;
   globalSpeed: number;
@@ -59,6 +68,8 @@ export function SpeakerSettings({
   languages,
   language,
   onLanguageChange,
+  voiceOrder,
+  onVoiceOrderChange,
   config,
   onConfigChange,
   globalSpeed,
@@ -68,6 +79,7 @@ export function SpeakerSettings({
   const modeName = useId();
   const singleSpeakerId = useId();
   const languageId = useId();
+  const orderId = useId();
   const speedId = useId();
   const pickersDisabled = disabled || voiceStatus !== "ready";
 
@@ -94,6 +106,7 @@ export function SpeakerSettings({
   const checklist = (
     <VoiceChecklist
       voices={voices}
+      order={voiceOrder}
       selected={config.selectedVoices}
       onToggle={toggleVoice}
       onSelectAll={selectAllShown}
@@ -150,6 +163,7 @@ export function SpeakerSettings({
                   id={singleSpeakerId}
                   voices={voices}
                   voicesByKey={voicesByKey}
+                  order={voiceOrder}
                   value={config.singleSpeaker}
                   onChange={(id) => update({ singleSpeaker: id })}
                   placeholder="Choose a speaker…"
@@ -221,6 +235,28 @@ export function SpeakerSettings({
           </div>
 
           <div>
+            <label htmlFor={orderId} className="mb-1 block text-sm font-medium text-slate-700">
+              Sort voices
+            </label>
+            <select
+              id={orderId}
+              value={voiceOrder}
+              onChange={(event) => onVoiceOrderChange(event.target.value === "tier" ? "tier" : "name")}
+              disabled={pickersDisabled}
+              className={FIELD_CLASS}
+            >
+              <option value="name">By name</option>
+              <option value="tier">By price, free tier first</option>
+            </select>
+            {voiceOrder === "tier" && (
+              <p className="mt-2 text-xs text-slate-500">
+                Prices come from TTS.ai's docs and a benchmark of the French voices. Other models are
+                listed under “Price not known yet”.
+              </p>
+            )}
+          </div>
+
+          <div>
             <div className="flex items-center justify-between">
               <label htmlFor={speedId} className="text-sm font-medium text-slate-700">
                 Global speed
@@ -264,6 +300,7 @@ export function SpeakerSettings({
 
 interface VoiceChecklistProps {
   voices: Voice[];
+  order: VoiceOrder;
   selected: string[];
   onToggle: (voiceKey: string) => void;
   onSelectAll: () => void;
@@ -271,7 +308,7 @@ interface VoiceChecklistProps {
   disabled: boolean;
 }
 
-function VoiceChecklist({ voices, selected, onToggle, onSelectAll, onClear, disabled }: VoiceChecklistProps) {
+function VoiceChecklist({ voices, order, selected, onToggle, onSelectAll, onClear, disabled }: VoiceChecklistProps) {
   const selectedKeys = new Set(selected);
   return (
     <div>
@@ -293,22 +330,29 @@ function VoiceChecklist({ voices, selected, onToggle, onSelectAll, onClear, disa
           No voices to show yet.
         </p>
       ) : (
-        <ul className="mt-2 grid max-h-60 grid-cols-1 gap-0.5 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1.5 sm:grid-cols-2">
-          {voices.map((voice) => (
-            <li key={voice.key}>
-              <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50">
-                <input
-                  type="checkbox"
-                  checked={selectedKeys.has(voice.key)}
-                  onChange={() => onToggle(voice.key)}
-                  disabled={disabled}
-                  className="h-4 w-4 accent-blue-600"
-                />
-                <span className="truncate">{formatVoiceLabel(voice)}</span>
-              </label>
-            </li>
+        <div className="mt-2 max-h-60 space-y-2 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1.5">
+          {arrangeVoices(voices, order).map((group) => (
+            <div key={group.key}>
+              {group.label && <p className="px-2 pt-1 text-xs font-semibold text-slate-500">{group.label}</p>}
+              <ul aria-label={group.label} className="grid grid-cols-1 gap-0.5 sm:grid-cols-2">
+                {group.voices.map((voice) => (
+                  <li key={voice.key}>
+                    <label className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-slate-50">
+                      <input
+                        type="checkbox"
+                        checked={selectedKeys.has(voice.key)}
+                        onChange={() => onToggle(voice.key)}
+                        disabled={disabled}
+                        className="h-4 w-4 accent-blue-600"
+                      />
+                      <span className="truncate">{formatVoiceLabel(voice)}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ))}
-        </ul>
+        </div>
       )}
     </div>
   );

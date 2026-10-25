@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import type { ZipProgress } from "../services/download";
+import type { CreditUsage } from "../utils/credits";
 import { Button } from "./Button";
+import { CreditCounter } from "./CreditCounter";
 import { Spinner } from "./Spinner";
 
 interface ToolbarProps {
@@ -13,6 +15,7 @@ interface ToolbarProps {
   onDownloadAll: () => void;
   canClear: boolean;
   onClear: () => void;
+  credits: CreditUsage;
   /** Messages shown above the buttons, so feedback stays next to the action that caused it. */
   children?: ReactNode;
 }
@@ -27,6 +30,7 @@ export function Toolbar({
   onDownloadAll,
   canClear,
   onClear,
+  credits,
   children,
 }: ToolbarProps) {
   return (
@@ -49,6 +53,7 @@ export function Toolbar({
                 Generate All
               </Button>
             )}
+            <CreditCounter usage={credits} />
           </div>
           <div className="flex items-center gap-2">
             <Button onClick={onDownloadAll} disabled={completedCount === 0 || zipProgress !== null}>

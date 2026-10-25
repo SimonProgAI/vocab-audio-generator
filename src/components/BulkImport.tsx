@@ -1,10 +1,13 @@
-import { useId, useMemo, useState, type KeyboardEvent } from "react";
+import { useId, useMemo, type KeyboardEvent } from "react";
 import { pluralize } from "../utils/format";
 import { Button } from "./Button";
 import { FIELD_CLASS } from "./fieldStyles";
 import { Section } from "./Section";
 
 interface BulkImportProps {
+  /** The box's text, kept by the parent so it survives a reload. */
+  draft: string;
+  onDraftChange: (draft: string) => void;
   onAdd: (texts: string[]) => void;
 }
 
@@ -21,15 +24,14 @@ function parseLines(text: string): string[] {
     .filter((line) => line.length > 0);
 }
 
-export function BulkImport({ onAdd }: BulkImportProps) {
+export function BulkImport({ draft, onDraftChange, onAdd }: BulkImportProps) {
   const textareaId = useId();
-  const [draft, setDraft] = useState("");
   const lines = useMemo(() => parseLines(draft), [draft]);
 
   const handleAdd = () => {
     if (lines.length === 0) return;
     onAdd(lines);
-    setDraft("");
+    onDraftChange("");
   };
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -51,7 +53,7 @@ export function BulkImport({ onAdd }: BulkImportProps) {
       <textarea
         id={textareaId}
         value={draft}
-        onChange={(event) => setDraft(event.target.value)}
+        onChange={(event) => onDraftChange(event.target.value)}
         onKeyDown={handleKeyDown}
         placeholder={PLACEHOLDER}
         rows={6}

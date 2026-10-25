@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import type { QueueItem } from "../types/queue";
-import { downloadAudio } from "./ttsApi";
+import { loadAudio } from "./audio";
 
 export const ZIP_FILENAME = "vocabulary_audio.zip";
 const ZIP_DOWNLOAD_CONCURRENCY = 4;
@@ -66,7 +66,7 @@ async function forEachWithConcurrency<T>(
 
 export async function downloadItem(item: QueueItem): Promise<void> {
   if (!isDownloadable(item)) throw new Error("This file isn't ready to download yet.");
-  const blob = await downloadAudio(item.downloadUrl);
+  const blob = await loadAudio(item.downloadUrl);
   saveBlob(blob, toMp3Name(item.filename));
 }
 
@@ -87,7 +87,7 @@ export async function downloadAllCompleted(
 
   await forEachWithConcurrency(entries, ZIP_DOWNLOAD_CONCURRENCY, async ({ item, name }) => {
     try {
-      zip.file(name, await downloadAudio(item.downloadUrl));
+      zip.file(name, await loadAudio(item.downloadUrl));
     } catch {
       skipped.push(name);
     } finally {

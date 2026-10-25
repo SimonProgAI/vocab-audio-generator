@@ -1,14 +1,17 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { BulkImport } from "./components/BulkImport";
+import { Button } from "./components/Button";
 import { Notice, type NoticeContent } from "./components/Notice";
 import { ProgressPanel } from "./components/ProgressPanel";
 import { QueueTable } from "./components/QueueTable";
 import { SpeakerSettings } from "./components/SpeakerSettings";
 import { Toolbar } from "./components/Toolbar";
+import { useAudioPlayer } from "./hooks/useAudioPlayer";
 import { type GenerationSummary, useGeneration } from "./hooks/useGeneration";
 import { useQueue } from "./hooks/useQueue";
 import { useVoices } from "./hooks/useVoices";
 import { isUpToDate, planGeneration } from "./services/assignment";
+import { EXPIRED_AUDIO_MESSAGE, isExpiredAudioError, loadAudio } from "./services/audio";
 import {
   ZIP_FILENAME,
   downloadAllCompleted,
@@ -16,11 +19,14 @@ import {
   toMp3Name,
   type ZipProgress,
 } from "./services/download";
-import { getErrorMessage, isApiKeyConfigured } from "./services/ttsApi";
-import type { QueueItem, SpeakerConfig } from "./types/queue";
+import { loadSession, saveSession, type RestoredSession } from "./services/session";
+import { getErrorMessage, isApiKeyConfigured, type SubmittedJob } from "./services/ttsApi";
+import { loadVoiceSample } from "./services/voiceSample";
+import type { QueueItem, SpeakerConfig, Voice } from "./types/queue";
+import { NO_CREDITS_USED, recordCredits, type CreditUsage } from "./utils/credits";
 import { pluralize } from "./utils/format";
 import { DEFAULT_SPEED } from "./utils/speed";
-import { defaultLanguage, matchesLanguage, summarizeLanguages } from "./utils/voices";
+import { defaultLanguage, matchesLanguage, summarizeLanguages, type VoiceOrder } from "./utils/voices";
 
 function summarizeRun({ completed, failed, stoppedByUser, fatalError }: GenerationSummary): NoticeContent {
   if (fatalError) {
@@ -49,16 +55,49 @@ function summarizeRun({ completed, failed, stoppedByUser, fatalError }: Generati
   };
 }
 
-export default function App() {
-  const { items, stats, actions } = useQueue();
-  const voiceLibrary = useVoices();
-  const generation = useGeneration(actions.applyProgress);
+function restoredNotice(session: RestoredSession | undefined): NoticeContent | null {
+  if (!session || session.items.length === 0) return null;
+  const { items, interrupted } = session;
+  return {
+    tone: "info",
+    title: "Queue restored",
+    messages: [
+      `Your ${pluralize(items.length, "file")} and settings were kept when the page reloaded.`,
+      ...(interrupted > 0
+        ? [
+            `${pluralize(interrupted, "file")} that ${interrupted === 1 ? "was" : "were"} still generating ${interrupted === 1 ? "is" : "are"} back to Pending. Click Generate All to finish ${interrupted === 1 ? "it" : "them"}.`,
+          ]
+        : []),
+    ],
+  };
+}
 
-  const [config, setConfig] = useState<SpeakerConfig>({ mode: "single", selectedVoices: [] });
-  const [globalSpeed, setGlobalSpeed] = useState(DEFAULT_SPEED);
-  const [languageChoice, setLanguageChoice] = useState<string | null>(null);
-  const [notice, setNotice] = useState<NoticeContent | null>(null);
+const DEFAULT_CONFIG: SpeakerConfig = { mode: "single", selectedVoices: [] };
+
+export default function App() {
+  // Read once: the queue and settings from before a reload in this tab, if any.
+  const [saved] = useState(loadSession);
+  const { items, stats, actions } = useQueue(saved?.items);
+  const voiceLibrary = useVoices();
+  const [credits, setCredits] = useState<CreditUsage>(saved?.credits ?? NO_CREDITS_USED);
+  const recordSubmitted = useCallback(
+    (job: SubmittedJob) => setCredits((usage) => recordCredits(usage, job)),
+    [],
+  );
+  const generation = useGeneration(actions.applyProgress, recordSubmitted);
+  const { current: playback, play, stop: stopPlayback } = useAudioPlayer();
+
+  const [config, setConfig] = useState<SpeakerConfig>(saved?.settings.config ?? DEFAULT_CONFIG);
+  const [globalSpeed, setGlobalSpeed] = useState(saved?.settings.globalSpeed ?? DEFAULT_SPEED);
+  const [languageChoice, setLanguageChoice] = useState<string | null>(saved?.settings.languageChoice ?? null);
+  const [voiceOrder, setVoiceOrder] = useState<VoiceOrder>(saved?.settings.voiceOrder ?? "name");
+  const [draft, setDraft] = useState(saved?.draft ?? "");
+  const [notice, setNotice] = useState<NoticeContent | null>(() => restoredNotice(saved));
   const [zipProgress, setZipProgress] = useState<ZipProgress | null>(null);
+
+  useEffect(() => {
+    saveSession({ items, draft, settings: { config, globalSpeed, languageChoice, voiceOrder }, credits });
+  }, [items, draft, config, globalSpeed, languageChoice, voiceOrder, credits]);
 
   const languages = useMemo(() => summarizeLanguages(voiceLibrary.voices), [voiceLibrary.voices]);
   const language = languageChoice ?? defaultLanguage(languages);
@@ -90,17 +129,66 @@ export default function App() {
     setNotice(summarizeRun(await generation.run(plan.jobs)));
   };
 
-  const handleDownload = useCallback(async (item: QueueItem) => {
-    try {
-      await downloadItem(item);
-    } catch (error) {
+  // An expired link can't be fixed by retrying, so the row fails and Generate All makes it again.
+  const reportAudioError = useCallback(
+    (item: QueueItem, action: "download" | "play", error: unknown) => {
+      const expired = isExpiredAudioError(error);
+      if (expired) {
+        actions.applyProgress([
+          {
+            id: item.id,
+            changes: { status: "failed", error: EXPIRED_AUDIO_MESSAGE, downloadUrl: undefined, generatedWith: undefined },
+          },
+        ]);
+      }
       setNotice({
         tone: "error",
-        title: `Couldn't download ${toMp3Name(item.filename)}`,
-        messages: [getErrorMessage(error)],
+        title: `Couldn't ${action} ${toMp3Name(item.filename)}`,
+        messages: [expired ? EXPIRED_AUDIO_MESSAGE : getErrorMessage(error)],
       });
-    }
-  }, []);
+    },
+    [actions],
+  );
+
+  const handleDownload = useCallback(
+    async (item: QueueItem) => {
+      try {
+        await downloadItem(item);
+      } catch (error) {
+        reportAudioError(item, "download", error);
+      }
+    },
+    [reportAudioError],
+  );
+
+  const handlePlay = useCallback(
+    async (item: QueueItem) => {
+      const url = item.downloadUrl;
+      if (!url) return;
+      try {
+        await play(item.id, () => loadAudio(url));
+      } catch (error) {
+        reportAudioError(item, "play", error);
+      }
+    },
+    [play, reportAudioError],
+  );
+
+  const handleSample = useCallback(
+    async (item: QueueItem, voice: Voice) => {
+      try {
+        await play(item.id, () => loadVoiceSample(voice, recordSubmitted));
+      } catch (error) {
+        setNotice({ tone: "error", title: `Couldn't play a sample of ${voice.name}`, messages: [getErrorMessage(error)] });
+      }
+    },
+    [play, recordSubmitted],
+  );
+
+  // Stop a clip whose row was removed, cleared or reset away.
+  useEffect(() => {
+    if (playback && !items.some((item) => item.id === playback.id)) stopPlayback();
+  }, [items, playback, stopPlayback]);
 
   const handleDownloadAll = async () => {
     try {
@@ -130,6 +218,29 @@ export default function App() {
     }
   };
 
+  // Start over: an empty queue, an empty Bulk Import box and default settings, like a first visit.
+  // The save effect then stores that blank state, so reloading afterwards stays blank too.
+  const handleReset = () => {
+    const removed = [
+      ...(items.length === 1 ? ["the 1 file in the queue"] : []),
+      ...(items.length > 1 ? [`all ${items.length} files from the queue`] : []),
+      ...(draft.trim() ? ["the text in Bulk Import"] : []),
+    ];
+    const question =
+      removed.length > 0
+        ? `Start over? This resets every setting and removes ${removed.join(" and ")}.`
+        : "Reset every setting to its default?";
+    if (!window.confirm(question)) return;
+    actions.clear();
+    setDraft("");
+    setConfig(DEFAULT_CONFIG);
+    setGlobalSpeed(DEFAULT_SPEED);
+    setLanguageChoice(null);
+    setVoiceOrder("name");
+    setCredits(NO_CREDITS_USED);
+    setNotice(null);
+  };
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-slate-200 bg-white">
@@ -146,6 +257,14 @@ export default function App() {
             <h1 className="text-xl font-semibold text-slate-900">French Vocabulary Audio Generator</h1>
             <p className="text-sm text-slate-500">Turn vocabulary lists into MP3 recordings with TTS.ai.</p>
           </div>
+          <Button
+            onClick={handleReset}
+            disabled={generation.isGenerating || zipProgress !== null}
+            title="Clear the queue and restore the default settings"
+            className="ml-auto"
+          >
+            Reset
+          </Button>
         </div>
       </header>
 
@@ -160,7 +279,7 @@ export default function App() {
           />
         )}
 
-        <BulkImport onAdd={actions.addTexts} />
+        <BulkImport draft={draft} onDraftChange={setDraft} onAdd={actions.addTexts} />
 
         <SpeakerSettings
           voiceStatus={voiceLibrary.status}
@@ -171,6 +290,8 @@ export default function App() {
           languages={languages}
           language={language}
           onLanguageChange={setLanguageChoice}
+          voiceOrder={voiceOrder}
+          onVoiceOrderChange={setVoiceOrder}
           config={config}
           onConfigChange={setConfig}
           globalSpeed={globalSpeed}
@@ -183,6 +304,7 @@ export default function App() {
           config={config}
           voices={visibleVoices}
           voicesByKey={voiceLibrary.voicesByKey}
+          voiceOrder={voiceOrder}
           globalSpeed={globalSpeed}
           outdatedIds={outdatedIds}
           locked={generation.isGenerating}
@@ -190,6 +312,10 @@ export default function App() {
           onEdit={actions.edit}
           onRemove={actions.remove}
           onDownload={handleDownload}
+          playback={playback}
+          onPlay={handlePlay}
+          onSample={handleSample}
+          onStopPlayback={stopPlayback}
         />
 
         <ProgressPanel stats={stats} />
@@ -205,6 +331,7 @@ export default function App() {
         onDownloadAll={() => void handleDownloadAll()}
         canClear={items.length > 0 && !generation.isGenerating}
         onClear={handleClear}
+        credits={credits}
       >
         {notice && <Notice {...notice} onDismiss={() => setNotice(null)} />}
       </Toolbar>

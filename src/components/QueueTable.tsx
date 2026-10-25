@@ -1,7 +1,8 @@
+import type { Playback } from "../hooks/useAudioPlayer";
 import { previewSpeaker } from "../services/assignment";
 import type { QueueItem, QueueItemEdit, SpeakerConfig, Voice } from "../types/queue";
 import { pluralize } from "../utils/format";
-import { voiceName } from "../utils/voices";
+import { voiceName, type VoiceOrder } from "../utils/voices";
 import { Button } from "./Button";
 import { QueueRow } from "./QueueRow";
 import { Section } from "./Section";
@@ -11,6 +12,7 @@ interface QueueTableProps {
   config: SpeakerConfig;
   voices: Voice[];
   voicesByKey: ReadonlyMap<string, Voice>;
+  voiceOrder: VoiceOrder;
   globalSpeed: number;
   outdatedIds: ReadonlySet<string>;
   locked: boolean;
@@ -18,6 +20,10 @@ interface QueueTableProps {
   onEdit: (id: string, changes: QueueItemEdit) => void;
   onRemove: (id: string) => void;
   onDownload: (item: QueueItem) => Promise<void>;
+  playback: Playback | null;
+  onPlay: (item: QueueItem) => void;
+  onSample: (item: QueueItem, voice: Voice) => void;
+  onStopPlayback: () => void;
 }
 
 const COLUMNS: ReadonlyArray<{ label: string; className: string }> = [
@@ -28,7 +34,7 @@ const COLUMNS: ReadonlyArray<{ label: string; className: string }> = [
   { label: "Speed", className: "w-28" },
   { label: "Speaker", className: "w-56" },
   { label: "Status", className: "w-40" },
-  { label: "Actions", className: "w-32 text-right" },
+  { label: "Actions", className: "w-48 text-right" },
 ];
 
 /** Speaker shown for modes other than Per File: the actual one once generation starts, else a preview. */
@@ -43,11 +49,23 @@ function assignedSpeakerLabel(
   return config.mode === "random" ? "Random pick" : "Not chosen yet";
 }
 
+/** The voice a row is set to get, so it can be sampled; unknown in random mode. */
+function sampleVoiceFor(
+  item: QueueItem,
+  index: number,
+  config: SpeakerConfig,
+  voicesByKey: ReadonlyMap<string, Voice>,
+): Voice | undefined {
+  const speakerKey = previewSpeaker(item, index, config);
+  return speakerKey ? voicesByKey.get(speakerKey) : undefined;
+}
+
 export function QueueTable({
   items,
   config,
   voices,
   voicesByKey,
+  voiceOrder,
   globalSpeed,
   outdatedIds,
   locked,
@@ -55,6 +73,10 @@ export function QueueTable({
   onEdit,
   onRemove,
   onDownload,
+  playback,
+  onPlay,
+  onSample,
+  onStopPlayback,
 }: QueueTableProps) {
   return (
     <Section
@@ -97,11 +119,17 @@ export function QueueTable({
                   assignedSpeaker={assignedSpeakerLabel(item, index, config, voicesByKey)}
                   voices={voices}
                   voicesByKey={voicesByKey}
+                  voiceOrder={voiceOrder}
                   outdated={outdatedIds.has(item.id)}
                   locked={locked}
                   onEdit={onEdit}
                   onRemove={onRemove}
                   onDownload={onDownload}
+                  sampleVoice={sampleVoiceFor(item, index, config, voicesByKey)}
+                  playback={playback?.id === item.id ? playback.state : undefined}
+                  onPlay={onPlay}
+                  onSample={onSample}
+                  onStopPlayback={onStopPlayback}
                 />
               ))
             )}

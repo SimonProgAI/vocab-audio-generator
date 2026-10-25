@@ -1,8 +1,12 @@
-import { memo, useState } from "react";
+import { memo, useState, type ReactNode } from "react";
+import type { PlaybackState } from "../hooks/useAudioPlayer";
+import { SAMPLE_TEXT } from "../services/voiceSample";
 import type { QueueItem, QueueItemEdit, Voice } from "../types/queue";
 import { SPEED_OPTIONS, effectiveSpeed, formatSpeed } from "../utils/speed";
+import type { VoiceOrder } from "../utils/voices";
 import { Button } from "./Button";
 import { FIELD_CLASS } from "./fieldStyles";
+import { Spinner } from "./Spinner";
 import { StatusBadge } from "./StatusBadge";
 import { VoiceSelect } from "./VoiceSelect";
 
@@ -15,11 +19,19 @@ interface QueueRowProps {
   assignedSpeaker: string;
   voices: Voice[];
   voicesByKey: ReadonlyMap<string, Voice>;
+  voiceOrder: VoiceOrder;
   outdated: boolean;
   locked: boolean;
   onEdit: (id: string, changes: QueueItemEdit) => void;
   onRemove: (id: string) => void;
   onDownload: (item: QueueItem) => Promise<void>;
+  /** The voice this row will get, for its Sample button. Undefined hides it (e.g. in random mode). */
+  sampleVoice?: Voice;
+  /** This row's clip, while it is loading or playing. */
+  playback?: PlaybackState;
+  onPlay: (item: QueueItem) => void;
+  onSample: (item: QueueItem, voice: Voice) => void;
+  onStopPlayback: () => void;
 }
 
 const CELL = "px-3 py-2.5 align-top";
@@ -32,15 +44,50 @@ function QueueRowComponent({
   assignedSpeaker,
   voices,
   voicesByKey,
+  voiceOrder,
   outdated,
   locked,
   onEdit,
   onRemove,
   onDownload,
+  sampleVoice,
+  playback,
+  onPlay,
+  onSample,
+  onStopPlayback,
 }: QueueRowProps) {
   const [downloading, setDownloading] = useState(false);
   const row = index + 1;
   const canDownload = item.status === "completed" && Boolean(item.downloadUrl);
+  const sample = item.status === "pending" ? sampleVoice : undefined;
+
+  let playControl: ReactNode = null;
+  if (playback) {
+    playControl = (
+      <Button size="sm" variant="ghost" onClick={onStopPlayback}>
+        {playback === "loading" && <Spinner className="h-3.5 w-3.5" />}
+        Stop
+      </Button>
+    );
+  } else if (canDownload) {
+    playControl = (
+      <Button size="sm" variant="ghost" onClick={() => onPlay(item)}>
+        Play
+      </Button>
+    );
+  } else if (sample) {
+    playControl = (
+      <Button
+        size="sm"
+        variant="ghost"
+        onClick={() => onSample(item, sample)}
+        disabled={locked}
+        title={`Hear ${sample.name} say “${SAMPLE_TEXT}”. The first sample of a voice uses a few credits.`}
+      >
+        Sample
+      </Button>
+    );
+  }
 
   const handleDownload = async () => {
     setDownloading(true);
@@ -131,6 +178,7 @@ function QueueRowComponent({
           <VoiceSelect
             voices={voices}
             voicesByKey={voicesByKey}
+            order={voiceOrder}
             value={item.speaker}
             onChange={(speaker) => onEdit(item.id, { speaker })}
             placeholder="Choose…"
@@ -158,6 +206,7 @@ function QueueRowComponent({
 
       <td className={CELL}>
         <div className="flex items-center justify-end gap-1">
+          {playControl}
           {canDownload && (
             <Button size="sm" onClick={handleDownload} disabled={downloading}>
               {downloading ? "Saving…" : "Download"}

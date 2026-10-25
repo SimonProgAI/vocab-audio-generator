@@ -42,12 +42,15 @@ export type TtsErrorKind =
 export class TtsApiError extends Error {
   readonly kind: TtsErrorKind;
   readonly retryAfterMs: number | undefined;
+  /** HTTP status, when the server answered. */
+  readonly status: number | undefined;
 
-  constructor(kind: TtsErrorKind, message: string, retryAfterMs?: number) {
+  constructor(kind: TtsErrorKind, message: string, retryAfterMs?: number, status?: number) {
     super(message);
     this.name = "TtsApiError";
     this.kind = kind;
     this.retryAfterMs = retryAfterMs;
+    this.status = status;
   }
 }
 
@@ -77,9 +80,11 @@ function fromAxiosError(error: AxiosError): TtsApiError {
 
   const { status } = response;
   const detail = extractServerMessage(response.data);
+  const answered = (kind: TtsErrorKind, message: string, retryAfter?: number) =>
+    new TtsApiError(kind, message, retryAfter, status);
 
   if (status === 401) {
-    return new TtsApiError(
+    return answered(
       "auth",
       isApiKeyConfigured
         ? "TTS.ai rejected your API key. Check VITE_TTS_API_KEY in your .env file, then restart the app."
@@ -87,31 +92,28 @@ function fromAxiosError(error: AxiosError): TtsApiError {
     );
   }
   if (status === 429) {
-    return new TtsApiError(
+    return answered(
       "rateLimit",
       "TTS.ai's rate limit was reached. Wait a minute and try again, or upgrade your TTS.ai plan for higher limits.",
       retryAfterMs(response.headers),
     );
   }
   if (status === 402) {
-    return new TtsApiError("request", "Your TTS.ai account is out of credits.");
+    return answered("request", "Your TTS.ai account is out of credits.");
   }
   if (status === 403) {
-    return new TtsApiError(
+    return answered(
       "request",
       withDetail("TTS.ai refused this request. Your plan may not include this voice.", detail),
     );
   }
   if (status >= 500) {
-    return new TtsApiError(
+    return answered(
       "server",
       `TTS.ai is having trouble right now (error ${status}). Please try again shortly.`,
     );
   }
-  return new TtsApiError(
-    "request",
-    withDetail(`TTS.ai couldn't process the request (error ${status}).`, detail),
-  );
+  return answered("request", withDetail(`TTS.ai couldn't process the request (error ${status}).`, detail));
 }
 
 function withDetail(message: string, detail: string | undefined): string {
@@ -213,6 +215,11 @@ function readString(record: JsonRecord, ...keys: string[]): string | undefined {
   return undefined;
 }
 
+function readNumber(record: JsonRecord, key: string): number | undefined {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function invalidResponse(message: string): TtsApiError {
   return new TtsApiError("invalidResponse", message);
 }
@@ -272,6 +279,10 @@ function parseVoices(data: unknown): Voice[] {
 export interface SubmittedJob {
   jobId: string;
   status: JobStatus;
+  /** Credits charged for this job; 0 when TTS.ai reused audio it had already made. */
+  creditsUsed?: number;
+  /** TTS.ai's reported balance. Missing on reused audio, and it doesn't always drop right away. */
+  creditsRemaining?: number;
 }
 
 function parseSubmittedJob(data: unknown): SubmittedJob {
@@ -279,7 +290,12 @@ function parseSubmittedJob(data: unknown): SubmittedJob {
   // The results endpoint is keyed by `uuid`; `job_id` is only a fallback.
   const jobId = readString(data, "uuid", "job_id");
   if (!jobId) throw invalidResponse("TTS.ai accepted the request but didn't return a job ID.");
-  return { jobId, status: normalizeStatus(data.status) ?? "queued" };
+  return {
+    jobId,
+    status: normalizeStatus(data.status) ?? "queued",
+    creditsUsed: readNumber(data, "credits_used"),
+    creditsRemaining: readNumber(data, "credits_remaining"),
+  };
 }
 
 export type JobStatusResult =

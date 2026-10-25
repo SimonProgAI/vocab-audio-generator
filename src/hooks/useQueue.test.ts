@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import { cleanup, renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import type { QueueItem } from "../types/queue";
-import { computeStats, queueReducer } from "./useQueue";
+import { computeStats, queueReducer, useQueue } from "./useQueue";
 
 function add(...texts: string[]): QueueItem[] {
   return queueReducer([], { type: "add", texts });
@@ -92,5 +94,30 @@ describe("computeStats", () => {
     if (!a || !b || !c) throw new Error("Expected three queue items.");
     const items: QueueItem[] = [a, { ...b, status: "completed" }, { ...c, status: "failed" }];
     expect(computeStats(items)).toEqual({ total: 3, pending: 1, queued: 0, processing: 0, completed: 1, failed: 1 });
+  });
+});
+
+describe("useQueue", () => {
+  afterEach(cleanup);
+
+  it("starts empty by default", () => {
+    const { result } = renderHook(() => useQueue());
+    expect(result.current.items).toEqual([]);
+    expect(result.current.stats.total).toBe(0);
+  });
+
+  it("starts from the given rows, such as ones restored after a reload", () => {
+    const restored = add("un", "deux");
+    const { result } = renderHook(() => useQueue(restored));
+    expect(result.current.items).toEqual(restored);
+    expect(result.current.stats).toMatchObject({ total: 2, pending: 2 });
+  });
+
+  it("only uses the initial rows on the first render", () => {
+    const { result, rerender } = renderHook(({ initial }) => useQueue(initial), {
+      initialProps: { initial: add("un") },
+    });
+    rerender({ initial: add("deux", "trois") });
+    expect(result.current.items.map((item) => item.text)).toEqual(["un"]);
   });
 });

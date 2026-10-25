@@ -1,0 +1,201 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { QueueItem } from "../types/queue";
+import { SESSION_KEY, clearSession, loadSession, parseSession, saveSession, type SessionSnapshot } from "./session";
+
+function row(overrides: Partial<QueueItem> = {}): QueueItem {
+  return {
+    id: "row-1",
+    text: "une rivière",
+    filename: "une_riviere",
+    autoFilename: true,
+    speed: 1,
+    overrideSpeed: false,
+    status: "pending",
+    ...overrides,
+  };
+}
+
+const snapshot: SessionSnapshot = {
+  items: [
+    row(),
+    row({
+      id: "row-2",
+      text: "un champ",
+      filename: "un_champ",
+      status: "completed",
+      speaker: "piper:siwis",
+      jobId: "job-2",
+      downloadUrl: "https://cdn.tts.ai/job-2/tts_output.mp3",
+      generatedWith: { speaker: "piper:siwis", speed: 1.2 },
+    }),
+    row({ id: "row-3", status: "failed", error: "Voice crashed", overrideSpeed: true, speed: 0.8 }),
+  ],
+  draft: "une ferme\nun village",
+  settings: {
+    config: { mode: "roundRobin", selectedVoices: ["piper:siwis", "melotts:FR"] },
+    globalSpeed: 1.2,
+    languageChoice: "all",
+    voiceOrder: "tier",
+  },
+  credits: { used: 319, reportedRemaining: 2_415_000 },
+};
+
+beforeEach(() => {
+  sessionStorage.clear();
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("saveSession and loadSession", () => {
+  it("round-trip the queue and settings", () => {
+    saveSession(snapshot);
+    expect(loadSession()).toEqual({ ...snapshot, interrupted: 0 });
+  });
+
+  it("find nothing when nothing was saved", () => {
+    expect(loadSession()).toBeUndefined();
+  });
+
+  it("ignore data that isn't valid JSON", () => {
+    sessionStorage.setItem(SESSION_KEY, "{oops");
+    expect(loadSession()).toBeUndefined();
+  });
+
+  it("drop the previous copy when a newer one can't be saved, so a reload can't restore stale rows", () => {
+    saveSession(snapshot);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Full", "QuotaExceededError");
+    });
+    saveSession({ ...snapshot, items: [...snapshot.items, row({ id: "row-4" })] });
+    expect(sessionStorage.getItem(SESSION_KEY)).toBeNull();
+  });
+
+  it("keep working when sessionStorage is full or blocked", () => {
+    const blocked = () => {
+      throw new DOMException("Blocked", "SecurityError");
+    };
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(blocked);
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("Full", "QuotaExceededError");
+    });
+    vi.spyOn(Storage.prototype, "removeItem").mockImplementation(blocked);
+
+    expect(() => saveSession(snapshot)).not.toThrow();
+    expect(loadSession()).toBeUndefined();
+    expect(() => clearSession()).not.toThrow();
+  });
+
+  it("keep working when the browser refuses access to sessionStorage itself", () => {
+    vi.spyOn(window, "sessionStorage", "get").mockImplementation(() => {
+      throw new DOMException("Blocked", "SecurityError");
+    });
+    expect(() => saveSession(snapshot)).not.toThrow();
+    expect(loadSession()).toBeUndefined();
+  });
+});
+
+describe("clearSession", () => {
+  it("removes the saved session", () => {
+    saveSession(snapshot);
+    clearSession();
+    expect(sessionStorage.getItem(SESSION_KEY)).toBeNull();
+    expect(loadSession()).toBeUndefined();
+  });
+});
+
+describe("parseSession", () => {
+  it("restores an empty Bulk Import box when no valid text was saved", () => {
+    expect(parseSession({ items: [] })?.draft).toBe("");
+    expect(parseSession({ items: [], draft: 42 })?.draft).toBe("");
+    expect(parseSession({ items: [], draft: "une ferme" })?.draft).toBe("une ferme");
+  });
+
+  it("restores the credit counter, or none when the saved one is invalid", () => {
+    expect(parseSession({ items: [], credits: { used: 44 } })?.credits).toEqual({ used: 44 });
+    expect(parseSession({ items: [], credits: { used: 44, reportedRemaining: -1 } })?.credits).toEqual({ used: 44 });
+    for (const credits of [undefined, "44", { used: -3 }, { used: Number.NaN }, { reportedRemaining: 10 }]) {
+      expect(parseSession({ items: [], credits })?.credits).toBeUndefined();
+    }
+  });
+
+  it("rejects data without a list of rows", () => {
+    for (const data of [null, "text", [], {}, { items: "rows" }]) {
+      expect(parseSession(data)).toBeUndefined();
+    }
+  });
+
+  it("puts rows that were still generating back to Pending, keeping their speaker", () => {
+    const restored = parseSession({
+      items: [
+        row({ id: "a", status: "queued", jobId: "job-a", speaker: "piper:siwis" }),
+        row({ id: "b", status: "processing", jobId: "job-b" }),
+        row({ id: "c", status: "completed", jobId: "job-c", downloadUrl: "https://cdn.tts.ai/c.mp3" }),
+      ],
+    });
+    expect(restored?.interrupted).toBe(2);
+    expect(restored?.items).toEqual([
+      row({ id: "a", status: "pending", speaker: "piper:siwis" }),
+      row({ id: "b", status: "pending" }),
+      row({ id: "c", status: "completed", jobId: "job-c", downloadUrl: "https://cdn.tts.ai/c.mp3" }),
+    ]);
+  });
+
+  it("drops invalid rows and repeated IDs but keeps the rest", () => {
+    const restored = parseSession({
+      items: [
+        row(),
+        null,
+        "une ferme",
+        { ...row({ id: "" }) },
+        { ...row({ id: "too-fast" }), speed: 9 },
+        { ...row({ id: "bad-status" }), status: "done" },
+        { ...row({ id: "bad-auto" }), autoFilename: "yes" },
+        { ...row({ id: "no-text" }), text: undefined },
+        row({ text: "same ID again" }),
+        row({ id: "row-2", text: "un champ" }),
+      ],
+    });
+    expect(restored?.items.map((item) => item.id)).toEqual(["row-1", "row-2"]);
+  });
+
+  it("drops broken optional fields instead of the whole row", () => {
+    const restored = parseSession({
+      items: [{ ...row(), speaker: 42, jobId: null, generatedWith: { speaker: "piper:siwis" } }],
+    });
+    expect(restored?.items).toEqual([row()]);
+    expect(restored?.items[0]?.speaker).toBeUndefined();
+    expect(restored?.items[0]?.generatedWith).toBeUndefined();
+  });
+
+  it("leaves out invalid settings so the app falls back to its defaults", () => {
+    expect(
+      parseSession({
+        items: [],
+        settings: { config: { mode: "chaos" }, globalSpeed: 7, languageChoice: 3, voiceOrder: "price" },
+      })?.settings,
+    ).toEqual({});
+    expect(parseSession({ items: [], settings: "fast" })?.settings).toEqual({});
+    expect(parseSession({ items: [] })?.settings).toEqual({});
+  });
+
+  it("keeps the valid settings when others are broken", () => {
+    expect(
+      parseSession({
+        items: [],
+        settings: {
+          config: { mode: "random", singleSpeaker: 5, selectedVoices: ["piper:siwis", 1, null, "melotts:FR"] },
+          globalSpeed: 0.8,
+          languageChoice: null,
+          voiceOrder: "sideways",
+        },
+      })?.settings,
+    ).toEqual({
+      config: { mode: "random", singleSpeaker: undefined, selectedVoices: ["piper:siwis", "melotts:FR"] },
+      globalSpeed: 0.8,
+      languageChoice: null,
+    });
+  });
+});
