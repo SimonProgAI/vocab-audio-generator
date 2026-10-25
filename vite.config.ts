@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -16,4 +17,10 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: { proxy: ttsProxy },
   preview: { proxy: ttsProxy },
+  test: {
+    // Overrides .env so tests never send the real key. tts.test is a reserved domain that
+    // never resolves, and MSW (src/test/setup.ts) answers or blocks every request anyway.
+    env: { VITE_TTS_API_KEY: "test-key", VITE_TTS_API_ORIGIN: "https://tts.test" },
+    setupFiles: ["src/test/setup.ts"],
+  },
 });

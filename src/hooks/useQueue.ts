@@ -47,7 +47,7 @@ function applyEdit(item: QueueItem, changes: QueueItemEdit): QueueItem {
   return textChanged ? { ...next, ...RESET_GENERATION } : next;
 }
 
-function queueReducer(state: QueueItem[], action: QueueAction): QueueItem[] {
+export function queueReducer(state: QueueItem[], action: QueueAction): QueueItem[] {
   switch (action.type) {
     case "add":
       return [...state, ...action.texts.map(createItem)];
@@ -67,7 +67,7 @@ function queueReducer(state: QueueItem[], action: QueueAction): QueueItem[] {
   }
 }
 
-function computeStats(items: QueueItem[]): QueueStats {
+export function computeStats(items: QueueItem[]): QueueStats {
   const stats: QueueStats = {
     total: items.length,
     pending: 0,
