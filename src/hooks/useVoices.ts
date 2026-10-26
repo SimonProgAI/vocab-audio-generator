@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { getVoices, toTtsApiError } from "../services/ttsApi";
 import type { Voice } from "../types/queue";
+import { isHiddenVoice } from "../utils/voices";
 
 export type VoiceLoadStatus = "loading" | "ready" | "error";
 
@@ -17,6 +18,7 @@ export function useVoices() {
   useEffect(() => {
     const controller = new AbortController();
     getVoices(controller.signal)
+      .then((all) => all.filter((voice) => !isHiddenVoice(voice)))
       .then((voices) =>
         setState(
           voices.length > 0

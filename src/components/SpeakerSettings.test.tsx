@@ -52,7 +52,7 @@ describe("SpeakerSettings voice sorting", () => {
       "Siwis (piper)",
       "Mélo (melotts)",
     ]);
-    expect(within(premium).getByRole("checkbox").closest("label")?.textContent).toBe("French (openvoice)");
+    expect(within(premium).getByRole("checkbox").closest("label")?.textContent).toBe("French (openvoice) · ignores speed");
     expect(screen.getByText(/Prices come from TTS.ai's docs/)).not.toBeNull();
   });
 

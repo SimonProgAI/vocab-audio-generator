@@ -43,14 +43,14 @@ afterEach(cleanup);
 describe("VoiceSelect", () => {
   it("lists voices without groups when sorted by name", () => {
     renderSelect("name");
-    expect(structure()).toEqual([["(no group)", ["French (openvoice)", "Siwis (piper)"]]]);
+    expect(structure()).toEqual([["(no group)", ["French (openvoice) · ignores speed", "Siwis (piper)"]]]);
   });
 
   it("groups voices by price tier, cheapest first", () => {
     renderSelect("tier");
     expect(structure()).toEqual([
       ["Free tier · 1 credit per character", ["Siwis (piper)"]],
-      ["Premium · 4 credits per character", ["French (openvoice)"]],
+      ["Premium · 4 credits per character", ["French (openvoice) · ignores speed"]],
     ]);
   });
 
@@ -59,7 +59,7 @@ describe("VoiceSelect", () => {
     expect(structure()).toEqual([
       ["Free tier · 1 credit per character", ["Siwis (piper)"]],
       ["Standard · 2 credits per character", ["English Male (bark)"]],
-      ["Premium · 4 credits per character", ["French (openvoice)"]],
+      ["Premium · 4 credits per character", ["French (openvoice) · ignores speed"]],
     ]);
     expect(screen.getByRole("combobox", { name: "Speaker" })).toHaveProperty("value", bark.key);
   });

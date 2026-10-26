@@ -641,3 +641,26 @@ describe("API key box", () => {
     expect(localStorage.length).toBe(0);
   });
 });
+
+describe("hidden voices", () => {
+  it("leaves voices that failed the French check out of every list and the count", async () => {
+    server.use(
+      http.get(`${API}/voices/`, () =>
+        HttpResponse.json({
+          voices: [
+            { id: "fr_FR-siwis-medium", model: "piper", name: "Siwis", language: "fr" },
+            { id: "v2/fr_speaker_0", model: "bark", name: "French Speaker 1", language: "fr" },
+            { id: "jean_fr", model: "pocket-tts", name: "Jean (French)", language: "fr" },
+            { id: "fantine_fr", model: "pocket-tts", name: "Fantine (French)", language: "fr" },
+          ],
+        }),
+      ),
+    );
+    render(<App />);
+    await screen.findByText(/2 voices loaded/);
+
+    const picker = screen.getByLabelText("Speaker for every file");
+    const options = [...picker.querySelectorAll("option")].map((option) => option.textContent);
+    expect(options).toEqual(["Choose a speaker…", "Fantine (French) (pocket-tts) · ignores speed", "Siwis (piper)"]);
+  });
+});

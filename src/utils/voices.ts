@@ -44,9 +44,49 @@ export function matchesLanguage(voice: Voice, language: string): boolean {
   return language === ALL_LANGUAGES || primaryLanguage(voice.language) === language;
 }
 
+/**
+ * Voices whose audio doesn't follow the speed setting. Checked on 2026-10-26 by timing "une
+ * rivière" at 0.5×, 1× and 2×: a voice that follows it comes out about twice as long at 0.5× and
+ * half as long at 2× (kokoro, melotts and piper did). These stayed the same length, got shorter at
+ * 0.5×, or got longer at 2×.
+ */
+const IGNORES_SPEED: ReadonlySet<string> = new Set([
+  "openvoice:FR", // 0.97 s at every speed.
+  "vits:css10_fr", // 1.24 s, 1.18 s, 1.18 s.
+  "pocket-tts:fantine_fr", // Shorter at 0.5× (1.27 s) than at 1× (1.68 s).
+  "qwen3-tts:eric_fr", // Shorter at 0.5× (1.61 s) than at 1× (2.71 s).
+  "qwen3-tts:vivian_fr", // Shorter at 0.5× (1.99 s) than at 1× (2.57 s).
+  "bark-small:v2/fr_speaker_0", // Longer at 2× (1.32 s) than at 1× (0.92 s).
+]);
+
+export function ignoresSpeed(voice: Pick<Voice, "key">): boolean {
+  return IGNORES_SPEED.has(voice.key);
+}
+
 export function formatVoiceLabel(voice: Voice): string {
   const details = [voice.gender, voice.model].filter(Boolean).join(", ");
-  return details ? `${voice.name} (${details})` : voice.name;
+  const label = details ? `${voice.name} (${details})` : voice.name;
+  return ignoresSpeed(voice) ? `${label} · ignores speed` : label;
+}
+
+/**
+ * Voices labeled French that don't reliably speak it, so the app leaves them out. Checked on
+ * 2026-10-26: each voice said a word and a sentence, and TTS.ai's speech-to-text (Whisper)
+ * transcribed them. These added words, repeated or garbled the text, or always fail to generate.
+ */
+const HIDDEN_VOICES: ReadonlySet<string> = new Set([
+  "bark:v2/fr_speaker_0", // Added a word: "Bernie, une rivière?"
+  "bark:v2/fr_speaker_1", // Added words: "Bonjour tout lui, je m'appelle…"
+  "cosyvoice2:French Female", // Said the word 5 times, heard as English; garbled the sentence.
+  "cosyvoice3:法文女", // Said the word 4 times; the sentence timed out after 8 minutes.
+  "moss-tts:default_fr", // TTS.ai: "model_disabled".
+  "moss-tts-nano:default_fr", // Garbled the word: "Mais... Où n'auriez-vous..."
+  "pocket-tts:jean_fr", // Cut the word short, heard as "On vit bien." even with French specified.
+  "zonos:french_male", // TTS.ai: "invalid_model".
+]);
+
+export function isHiddenVoice(voice: Pick<Voice, "key">): boolean {
+  return HIDDEN_VOICES.has(voice.key);
 }
 
 export function voiceName(voiceKey: string, voicesByKey: ReadonlyMap<string, Voice>): string {
