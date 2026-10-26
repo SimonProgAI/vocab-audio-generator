@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { server } from "../test/server";
 import type { Voice } from "../types/queue";
 import { wait } from "../utils/wait";
-import { clearAudioCache } from "./audio";
+import { wavFile } from "../test/wav";
+import { clearAudioCache, isWav } from "./audio";
 import { SAMPLE_TEXT, clearVoiceSamples, loadVoiceSample } from "./voiceSample";
 
 // Polls and retries happen instantly.
@@ -138,5 +139,15 @@ describe("stopping a sample", () => {
     const again = fakeTtsAi(DONE);
     await loadVoiceSample(siwis);
     expect(tts.submitted.length + again.submitted.length).toBe(2);
+  });
+});
+
+describe("sample audio", () => {
+  it("is played as TTS.ai sent it: a WAV sample isn't converted to MP3", async () => {
+    fakeTtsAi(DONE);
+    server.use(
+      http.get(SAMPLE_URL, () => new HttpResponse(wavFile({ samples: [1, 2, 3, 4] }), { headers: { "Content-Type": "audio/mpeg" } })),
+    );
+    expect(await isWav(await loadVoiceSample(siwis))).toBe(true);
   });
 });

@@ -1,8 +1,7 @@
 import type { Voice } from "../types/queue";
 import { DEFAULT_SPEED } from "../utils/speed";
 import { wait } from "../utils/wait";
-import { loadAudio } from "./audio";
-import { TtsApiError, getJobStatus, submitJob, type SubmittedJob } from "./ttsApi";
+import { TtsApiError, downloadAudio, getJobStatus, submitJob, type SubmittedJob } from "./ttsApi";
 
 /** What every voice sample says. Short, so a sample costs few credits. */
 export const SAMPLE_TEXT = "Bonjour, ça va ?";
@@ -48,7 +47,8 @@ export async function loadVoiceSample(voice: Voice, { signal, onSubmitted }: Sam
     const result = await getJobStatus(jobId, signal);
     if (result.status === "completed") {
       unfinishedJobs.delete(voice.key);
-      const audio = await loadAudio(result.resultUrl);
+      // Only played, never saved, so the file is used as TTS.ai sent it: no MP3 conversion.
+      const audio = await downloadAudio(result.resultUrl, signal);
       samples.set(voice.key, audio);
       return audio;
     }

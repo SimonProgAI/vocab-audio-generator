@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SpeakerConfig, Voice } from "../types/queue";
-import type { VoiceListOptions } from "../utils/voices";
+import { arrangeVoiceList, type LanguageSummary, type VoiceListOptions } from "../utils/voices";
 import { SpeakerSettings } from "./SpeakerSettings";
 
 // In TTS.ai's order. All but Xavier were tested; melotts and piper respond to speed.
@@ -18,20 +18,25 @@ const OFF: VoiceListOptions = { testedOnly: false, byPrice: false, followsSpeed:
 function renderSettings(
   voiceList: Partial<VoiceListOptions>,
   config: SpeakerConfig = { mode: "random", selectedVoices: [] },
-  { shown = voices, disabled = false }: { shown?: Voice[]; disabled?: boolean } = {},
+  {
+    shown = voices,
+    disabled = false,
+    languages = [{ code: "fr", label: "French", count: shown.length, total: shown.length }],
+  }: { shown?: Voice[]; disabled?: boolean; languages?: LanguageSummary[] } = {},
 ) {
+  const options = { ...OFF, ...voiceList };
   const onVoiceListChange = vi.fn();
   const onConfigChange = vi.fn();
   render(
     <SpeakerSettings
       voiceStatus="ready"
       onRetryVoices={vi.fn()}
-      voices={shown}
+      arranged={arrangeVoiceList(shown, options)}
       voicesByKey={new Map(shown.map((voice) => [voice.key, voice]))}
-      languages={[{ code: "fr", label: "French", count: shown.length }]}
+      languages={languages}
       language="fr"
       onLanguageChange={vi.fn()}
-      voiceList={{ ...OFF, ...voiceList }}
+      voiceList={options}
       onVoiceListChange={onVoiceListChange}
       config={config}
       onConfigChange={onConfigChange}
@@ -147,5 +152,61 @@ describe("the voice pool under Sort voices", () => {
       "Premium · 4 credits per character",
       "Price not known yet",
     ]);
+  });
+});
+
+describe("voices you picked that the boxes now hide", () => {
+  const random = (selectedVoices: string[]): SpeakerConfig => ({ mode: "random", selectedVoices });
+  const hiddenPicks = () => screen.queryByRole("list", { name: "Selected, but hidden by the language or Sort voices" });
+
+  it("keep a ticked checkbox in a group of their own, first", () => {
+    renderSettings({ followsSpeed: true, byName: true }, random(["openvoice:FR"]));
+    const group = hiddenPicks();
+    expect(group).not.toBeNull();
+    const [box] = within(group as HTMLElement).getAllByRole("checkbox");
+    expect(box?.closest("label")?.textContent).toBe("French (openvoice) · ignores speed");
+    expect(box).toHaveProperty("checked", true);
+    expect(pool()[0]).toBe("French (openvoice) · ignores speed");
+  });
+
+  it("can be unticked, which takes them out of the pool", () => {
+    const { onConfigChange } = renderSettings({ followsSpeed: true, byName: true }, random(["openvoice:FR", "melotts:FR"]));
+    fireEvent.click(within(hiddenPicks() as HTMLElement).getByRole("checkbox"));
+    expect(onConfigChange).toHaveBeenCalledWith(random(["melotts:FR"]));
+  });
+
+  it("still show when nothing else is left, with the reason", () => {
+    renderSettings({ testedOnly: true }, random(["xtts:fr_test"]), { shown: voices.slice(3) });
+    expect(within(hiddenPicks() as HTMLElement).getByRole("checkbox").closest("label")?.textContent).toBe("Xavier (xtts)");
+    expect(screen.getByText("No tested voices here. Only French voices have been tested so far.")).not.toBeNull();
+  });
+
+  it("show a name even for a voice the app no longer offers at all", () => {
+    renderSettings({ byName: true }, random(["bark:v2/fr_speaker_0"]));
+    expect(within(hiddenPicks() as HTMLElement).getByRole("checkbox").closest("label")?.textContent).toBe("French Speaker 1");
+  });
+
+  it("aren't listed twice when the boxes let them through", () => {
+    renderSettings({ byName: true }, random(["melotts:FR"]));
+    expect(hiddenPicks()).toBeNull();
+  });
+});
+
+describe("language counts", () => {
+  it("count the voices the Sort voices boxes let through, out of all of them", () => {
+    renderSettings({ testedOnly: true, byName: true }, undefined, {
+      languages: [
+        { code: "en", label: "English", count: 0, total: 40 },
+        { code: "fr", label: "French", count: 8, total: 8 },
+      ],
+    });
+    const options = [...screen.getByLabelText("Voice language").querySelectorAll("option")].map((option) => option.textContent);
+    expect(options).toEqual(["All languages (8 of 48)", "English (0 of 40)", "French (8)"]);
+    expect(screen.getByText("48 voices loaded, 8 let through by Sort voices. Both apply to every speaker list.")).not.toBeNull();
+  });
+
+  it("say plainly when every voice is shown", () => {
+    renderSettings({ byName: true });
+    expect(screen.getByText("4 voices loaded. The language and Sort voices apply to every speaker list.")).not.toBeNull();
   });
 });

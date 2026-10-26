@@ -1,4 +1,5 @@
 import { Mp3Encoder } from "@breezystack/lamejs";
+import { isWavHeader } from "./wavHeader";
 
 /** Plenty for speech, and keeps vocabulary files small. */
 const KBPS = 64;
@@ -24,14 +25,20 @@ function decode(view: DataView, start: number, length: number, format: number, c
   const frames = Math.floor(length / (bytesPerSample * channelCount));
   const kept = Math.min(channelCount, 2);
   const at = (frame: number, channel: number) => start + (frame * channelCount + channel) * bytesPerSample;
+  // A NaN or infinite sample would otherwise silence the whole clip (gain 0) or skip the turn-down.
+  const float = (frame: number, channel: number) => {
+    const value = view.getFloat32(at(frame, channel), true);
+    return Number.isFinite(value) ? value : 0;
+  };
 
-  // Float audio can go past ±1.0 (bark-small peaks around 1.7). Clipping that to 16 bits distorts
-  // it badly enough to change what is heard, so the whole clip is turned down to fit instead.
+  // Float audio can go past ±1.0 (bark-small, still listed for other languages, peaks around 1.7).
+  // Clipping that to 16 bits distorts it enough to change what is heard, so the whole clip is
+  // turned down to fit instead.
   let gain = 1;
   if (format === IEEE_FLOAT) {
     let peak = 0;
     for (let frame = 0; frame < frames; frame += 1) {
-      for (let channel = 0; channel < kept; channel += 1) peak = Math.max(peak, Math.abs(view.getFloat32(at(frame, channel), true)));
+      for (let channel = 0; channel < kept; channel += 1) peak = Math.max(peak, Math.abs(float(frame, channel)));
     }
     if (peak > 1) gain = 1 / peak;
   }
@@ -42,7 +49,7 @@ function decode(view: DataView, start: number, length: number, format: number, c
       const sample =
         format === PCM
           ? view.getInt16(at(frame, channel), true)
-          : Math.round(Math.max(-1, Math.min(1, view.getFloat32(at(frame, channel), true) * gain)) * 0x7fff);
+          : Math.round(Math.max(-1, Math.min(1, float(frame, channel) * gain)) * 0x7fff);
       (channels[channel] as Int16Array)[frame] = sample;
     }
   }
@@ -51,11 +58,11 @@ function decode(view: DataView, start: number, length: number, format: number, c
 
 /**
  * Reads the WAV files TTS.ai sends: 16-bit integer PCM (piper, vits) and 32-bit float (bark-small).
- * Other sample formats throw.
+ * Other sample formats, and files without a single sample, throw.
  */
 export function readWav(bytes: ArrayBuffer): Pcm {
   const view = new DataView(bytes);
-  if (view.byteLength < 12 || tag(view, 0) !== "RIFF" || tag(view, 8) !== "WAVE") throw new Error("Not a WAV file.");
+  if (!isWavHeader(new Uint8Array(bytes, 0, Math.min(12, bytes.byteLength)))) throw new Error("Not a WAV file.");
   let format = 0;
   let channelCount = 0;
   let sampleRate = 0;
@@ -77,8 +84,12 @@ export function readWav(bytes: ArrayBuffer): Pcm {
       if (!supported || channelCount < 1 || sampleRate <= 0) {
         throw new Error(`Unsupported WAV format (code ${format}, ${bits}-bit).`);
       }
-      const length = Math.min(size, view.byteLength - body);
-      return { channels: decode(view, body, length, format, channelCount, bits), sampleRate };
+      // Streaming writers can leave the size as 0 (or too big): then the data runs to the end.
+      const available = view.byteLength - body;
+      const length = size === 0 ? available : Math.min(size, available);
+      const channels = decode(view, body, length, format, channelCount, bits);
+      if ((channels[0]?.length ?? 0) === 0) break;
+      return { channels, sampleRate };
     }
     offset = body + size + (size % 2);
   }

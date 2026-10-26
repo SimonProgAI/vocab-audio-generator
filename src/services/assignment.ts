@@ -60,8 +60,8 @@ function describeRows(rows: number[], problem: string, fix: string): string {
   return `${subject} ${rows.length === 1 ? "has" : "have"} ${problem}. ${fix}`;
 }
 
-function rowsWhere(items: QueueItem[], predicate: (item: QueueItem) => boolean): number[] {
-  return items.flatMap((item, index) => (predicate(item) ? [index + 1] : []));
+function rowsWhere(items: QueueItem[], predicate: (item: QueueItem, index: number) => boolean): number[] {
+  return items.flatMap((item, index) => (predicate(item, index) ? [index + 1] : []));
 }
 
 function validateSpeakerConfig(
@@ -126,7 +126,12 @@ export function planGeneration(
     errors.push(describeRows(missingFilename, "no filename", "Enter one, or tick Auto."));
   }
   if (config.mode === "perFile") {
-    const missingSpeaker = rowsWhere(items, (item) => !item.speaker || !voicesByKey.has(item.speaker));
+    // Rows already up to date are skipped, so they don't need a speaker that's still offered.
+    const missingSpeaker = rowsWhere(
+      items,
+      (item, index) =>
+        !isUpToDate(item, index, config, globalSpeed) && (!item.speaker || !voicesByKey.has(item.speaker)),
+    );
     if (missingSpeaker.length > 0) {
       errors.push(
         describeRows(

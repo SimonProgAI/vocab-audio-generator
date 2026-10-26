@@ -5,10 +5,15 @@ export const ALL_LANGUAGES = "all";
 export interface LanguageSummary {
   code: string;
   label: string;
+  /** Voices in this language that the Sort voices boxes let through. */
   count: number;
+  /** All voices in this language. */
+  total: number;
 }
 
 const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
+/** Made once: much faster than String.localeCompare for sorting long lists. */
+const NAME_ORDER = new Intl.Collator();
 
 /** "fr-FR" → "fr". Voices are grouped by primary language so regional variants stay together. */
 export function primaryLanguage(code: string): string {
@@ -24,15 +29,27 @@ function languageLabel(code: string): string {
   }
 }
 
-export function summarizeLanguages(voices: readonly Voice[]): LanguageSummary[] {
-  const counts = new Map<string, number>();
+/** Every language in `voices`, counting the voices `counted` lets through (all, by default). */
+export function summarizeLanguages(
+  voices: readonly Voice[],
+  counted: (voice: Voice) => boolean = () => true,
+): LanguageSummary[] {
+  const counts = new Map<string, { count: number; total: number }>();
   for (const voice of voices) {
     const code = primaryLanguage(voice.language);
-    counts.set(code, (counts.get(code) ?? 0) + 1);
+    const entry = counts.get(code) ?? { count: 0, total: 0 };
+    entry.total += 1;
+    if (counted(voice)) entry.count += 1;
+    counts.set(code, entry);
   }
   return [...counts]
-    .map(([code, count]) => ({ code, label: languageLabel(code), count }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+    .map(([code, { count, total }]) => ({ code, label: languageLabel(code), count, total }))
+    .sort((a, b) => NAME_ORDER.compare(a.label, b.label));
+}
+
+/** "French (8)", or "English (0 of 40)" when the Sort voices boxes hide some. */
+export function formatLanguageCount({ count, total }: Pick<LanguageSummary, "count" | "total">): string {
+  return count === total ? `${count}` : `${count} of ${total}`;
 }
 
 /** French is the point of this app, so prefer it whenever the API offers French voices. */
@@ -74,12 +91,23 @@ export function followsSpeed(voice: Pick<Voice, "key">): boolean {
 }
 
 /**
- * Every voice that passed the French check also went through the speed check, so a known speed
- * result means the voice was tested. Today that's the French voices still shown; other languages
- * haven't been checked.
+ * Voices that went through both checks on 2026-10-26: they spoke French correctly (speech-to-text
+ * heard the word and the sentence right) and then had their speed timed. Every other voice,
+ * which means every other language, hasn't been tested.
  */
+const TESTED_VOICES: ReadonlySet<string> = new Set([
+  "kokoro:ff_siwis",
+  "melotts:FR",
+  "openvoice:FR",
+  "piper:fr_FR-siwis-medium",
+  "pocket-tts:fantine_fr",
+  "qwen3-tts:eric_fr",
+  "qwen3-tts:vivian_fr",
+  "vits:css10_fr",
+]);
+
 export function wasTested(voice: Pick<Voice, "key">): boolean {
-  return followsSpeed(voice) || ignoresSpeed(voice);
+  return TESTED_VOICES.has(voice.key);
 }
 
 export function formatVoiceLabel(voice: Voice): string {
@@ -95,16 +123,17 @@ export function formatVoiceLabel(voice: Voice): string {
  * bark-small passed that check but was dropped later: its clips stop abruptly mid-sound, it
  * ignores the speed setting, and it is slow.
  */
-const HIDDEN_VOICES: ReadonlySet<string> = new Set([
-  "bark:v2/fr_speaker_0", // Added a word: "Bernie, une rivière?"
-  "bark:v2/fr_speaker_1", // Added words: "Bonjour tout lui, je m'appelle…"
-  "bark-small:v2/fr_speaker_0", // Clips end abruptly mid-sound, heard as "Une rivière est..."; ignores speed.
-  "cosyvoice2:French Female", // Said the word 5 times, heard as English; garbled the sentence.
-  "cosyvoice3:法文女", // Said the word 4 times; the sentence timed out after 8 minutes.
-  "moss-tts:default_fr", // TTS.ai: "model_disabled".
-  "moss-tts-nano:default_fr", // Garbled the word: "Mais... Où n'auriez-vous..."
-  "pocket-tts:jean_fr", // Cut the word short, heard as "On vit bien." even with French specified.
-  "zonos:french_male", // TTS.ai: "invalid_model".
+const HIDDEN_VOICES: ReadonlyMap<string, string> = new Map([
+  // Key → name, so rows made with these voices before they were hidden still show a name.
+  ["bark:v2/fr_speaker_0", "French Speaker 1"], // Added a word: "Bernie, une rivière?"
+  ["bark:v2/fr_speaker_1", "French Speaker 2"], // Added words: "Bonjour tout lui, je m'appelle…"
+  ["bark-small:v2/fr_speaker_0", "French Speaker"], // Clips end abruptly mid-sound ("Une rivière est..."); ignores speed.
+  ["cosyvoice2:French Female", "French Female"], // Said the word 5 times, heard as English; garbled the sentence.
+  ["cosyvoice3:法文女", "French Female"], // Said the word 4 times; the sentence timed out after 8 minutes.
+  ["moss-tts:default_fr", "French"], // TTS.ai: "model_disabled".
+  ["moss-tts-nano:default_fr", "French"], // Garbled the word: "Mais... Où n'auriez-vous..."
+  ["pocket-tts:jean_fr", "Jean (French)"], // Cut the word short, heard as "On vit bien." even with French specified.
+  ["zonos:french_male", "French Male"], // TTS.ai: "invalid_model".
 ]);
 
 export function isHiddenVoice(voice: Pick<Voice, "key">): boolean {
@@ -112,7 +141,7 @@ export function isHiddenVoice(voice: Pick<Voice, "key">): boolean {
 }
 
 export function voiceName(voiceKey: string, voicesByKey: ReadonlyMap<string, Voice>): string {
-  return voicesByKey.get(voiceKey)?.name ?? voiceKey;
+  return voicesByKey.get(voiceKey)?.name ?? HIDDEN_VOICES.get(voiceKey) ?? voiceKey;
 }
 
 /** TTS.ai price tiers: free models use 1 credit per character of text, standard 2, premium 4. */
@@ -175,7 +204,7 @@ export const VOICE_LIST_CHECKBOXES: ReadonlyArray<{ option: keyof VoiceListOptio
 ];
 
 function byName(a: Voice, b: Voice): number {
-  return a.name.localeCompare(b.name) || (a.model ?? "").localeCompare(b.model ?? "");
+  return NAME_ORDER.compare(a.name, b.name) || NAME_ORDER.compare(a.model ?? "", b.model ?? "");
 }
 
 export interface VoiceGroup {
@@ -185,15 +214,18 @@ export interface VoiceGroup {
   voices: Voice[];
 }
 
+/** Whether the Tested voices only and Responds to speed control boxes let `voice` through. */
+export function passesFilters(voice: Pick<Voice, "key">, options: VoiceListOptions): boolean {
+  return (!options.testedOnly || wasTested(voice)) && (!options.followsSpeed || followsSpeed(voice));
+}
+
 /**
  * Applies the filters, then sorts: by price groups the voices by tier (empty tiers are left out),
  * and by name orders them A–Z, inside each group when both are on. With neither, voices keep
  * TTS.ai's order. Returns no groups when no voice is left.
  */
 export function arrangeVoices(voices: readonly Voice[], options: VoiceListOptions): VoiceGroup[] {
-  const filtered = voices.filter(
-    (voice) => (!options.testedOnly || wasTested(voice)) && (!options.followsSpeed || followsSpeed(voice)),
-  );
+  const filtered = voices.filter((voice) => passesFilters(voice, options));
   const shown = options.byName ? [...filtered].sort(byName) : filtered;
   if (!options.byPrice) return shown.length > 0 ? [{ key: "all", voices: shown }] : [];
   return TIER_ORDER.map((tier) => ({
@@ -203,9 +235,31 @@ export function arrangeVoices(voices: readonly Voice[], options: VoiceListOption
   })).filter((group) => group.voices.length > 0);
 }
 
-/** Why a list came out empty, in the words of the Sort voices checkboxes. */
-export function emptyListMessage(options: VoiceListOptions): string {
-  if (options.testedOnly) return "No tested voices here. Only French voices have been tested so far.";
-  if (options.followsSpeed) return "None of these voices is known to respond to speed control.";
-  return "No voices to show.";
+/**
+ * Why `voices` (in the chosen language) came out empty: naming the box that emptied it, checked in
+ * the order the boxes apply.
+ */
+export function emptyListMessage(voices: readonly Voice[], options: VoiceListOptions): string {
+  if (voices.length === 0) return "No voices to show yet.";
+  const tested = options.testedOnly ? voices.filter(wasTested) : voices;
+  if (tested.length === 0) return "No tested voices here. Only French voices have been tested so far.";
+  return "None of these voices is known to respond to speed control.";
+}
+
+/** A speaker list, arranged once and shared by every picker that shows it. */
+export interface ArrangedVoices {
+  groups: VoiceGroup[];
+  /** Keys of every voice in `groups`. */
+  shown: ReadonlySet<string>;
+  /** Why `groups` is empty; undefined when it isn't. */
+  emptyMessage?: string;
+}
+
+export function arrangeVoiceList(voices: readonly Voice[], options: VoiceListOptions): ArrangedVoices {
+  const groups = arrangeVoices(voices, options);
+  return {
+    groups,
+    shown: new Set(groups.flatMap((group) => group.voices.map((voice) => voice.key))),
+    emptyMessage: groups.length === 0 ? emptyListMessage(voices, options) : undefined,
+  };
 }

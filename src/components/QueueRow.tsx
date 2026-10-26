@@ -3,7 +3,7 @@ import type { PlaybackState } from "../hooks/useAudioPlayer";
 import { SAMPLE_TEXT } from "../services/voiceSample";
 import type { QueueItem, QueueItemEdit, Voice } from "../types/queue";
 import { SPEED_OPTIONS, effectiveSpeed, formatSpeed } from "../utils/speed";
-import type { VoiceListOptions } from "../utils/voices";
+import type { ArrangedVoices } from "../utils/voices";
 import { Button } from "./Button";
 import { FIELD_CLASS } from "./fieldStyles";
 import { Spinner } from "./Spinner";
@@ -17,9 +17,8 @@ interface QueueRowProps {
   /** Per File mode shows a speaker picker; other modes show `assignedSpeaker`. */
   speakerEditable: boolean;
   assignedSpeaker: string;
-  voices: Voice[];
+  arranged: ArrangedVoices;
   voicesByKey: ReadonlyMap<string, Voice>;
-  voiceList: VoiceListOptions;
   outdated: boolean;
   locked: boolean;
   onEdit: (id: string, changes: QueueItemEdit) => void;
@@ -42,9 +41,8 @@ function QueueRowComponent({
   globalSpeed,
   speakerEditable,
   assignedSpeaker,
-  voices,
+  arranged,
   voicesByKey,
-  voiceList,
   outdated,
   locked,
   onEdit,
@@ -176,9 +174,8 @@ function QueueRowComponent({
       <td className={CELL}>
         {speakerEditable ? (
           <VoiceSelect
-            voices={voices}
+            arranged={arranged}
             voicesByKey={voicesByKey}
-            voiceList={voiceList}
             value={item.speaker}
             onChange={(speaker) => onEdit(item.id, { speaker })}
             placeholder="Choose…"

@@ -3,7 +3,7 @@ import type { Playback } from "../hooks/useAudioPlayer";
 import { previewSpeaker } from "../services/assignment";
 import type { QueueItem, QueueItemEdit, SpeakerConfig, Voice } from "../types/queue";
 import { pluralize } from "../utils/format";
-import { voiceName, type VoiceListOptions } from "../utils/voices";
+import { voiceName, type ArrangedVoices } from "../utils/voices";
 import { Button } from "./Button";
 import { QueueRow } from "./QueueRow";
 import { Section } from "./Section";
@@ -11,9 +11,8 @@ import { Section } from "./Section";
 interface QueueTableProps {
   items: QueueItem[];
   config: SpeakerConfig;
-  voices: Voice[];
+  arranged: ArrangedVoices;
   voicesByKey: ReadonlyMap<string, Voice>;
-  voiceList: VoiceListOptions;
   globalSpeed: number;
   outdatedIds: ReadonlySet<string>;
   locked: boolean;
@@ -64,9 +63,8 @@ function sampleVoiceFor(
 function QueueTableComponent({
   items,
   config,
-  voices,
+  arranged,
   voicesByKey,
-  voiceList,
   globalSpeed,
   outdatedIds,
   locked,
@@ -118,9 +116,8 @@ function QueueTableComponent({
                   globalSpeed={globalSpeed}
                   speakerEditable={config.mode === "perFile"}
                   assignedSpeaker={assignedSpeakerLabel(item, index, config, voicesByKey)}
-                  voices={voices}
+                  arranged={arranged}
                   voicesByKey={voicesByKey}
-                  voiceList={voiceList}
                   outdated={outdatedIds.has(item.id)}
                   locked={locked}
                   onEdit={onEdit}

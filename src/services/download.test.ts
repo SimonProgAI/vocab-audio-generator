@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { wavBlob } from "../test/wav";
 import type { QueueItem } from "../types/queue";
 import { clearAudioCache, loadAudio } from "./audio";
 import { downloadAllCompleted, downloadItem, isDownloadable, toMp3Name } from "./download";
@@ -83,21 +84,7 @@ describe("downloadItem", () => {
   });
 
   it("saves real MP3 even when TTS.ai sent WAV", async () => {
-    const header = new Uint8Array(44);
-    const view = new DataView(header.buffer);
-    [..."RIFF"].forEach((char, i) => view.setUint8(i, char.charCodeAt(0)));
-    [..."WAVEfmt "].forEach((char, i) => view.setUint8(8 + i, char.charCodeAt(0)));
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, 1, true);
-    view.setUint32(24, 22050, true);
-    view.setUint32(28, 44100, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    [..."data"].forEach((char, i) => view.setUint8(36 + i, char.charCodeAt(0)));
-    const samples = new Int16Array(4410).map((_, i) => Math.round(Math.sin(i / 8) * 8000));
-    view.setUint32(40, samples.byteLength, true);
-    vi.mocked(downloadAudio).mockResolvedValue(new Blob([header, new Uint8Array(samples.buffer)], { type: "audio/mpeg" }));
+    vi.mocked(downloadAudio).mockResolvedValue(wavBlob({ type: "audio/mpeg" }));
 
     await downloadItem(completed);
 

@@ -1,6 +1,7 @@
 import { http, HttpResponse } from "msw/http";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { server } from "../test/server";
+import { wavBlob, wavFile } from "../test/wav";
 import { clearAudioCache, isExpiredAudioError, isWav, loadAudio, retainAudio, toMp3 } from "./audio";
 import { TtsApiError } from "./ttsApi";
 
@@ -27,30 +28,6 @@ beforeEach(() => {
   clearAudioCache();
 });
 
-/** A small mono 16-bit WAV, like piper sends; `bits: 8` makes one the converter can't read. */
-function wavBytes({ seconds = 0.2, bits = 16 }: { seconds?: number; bits?: number } = {}): Uint8Array<ArrayBuffer> {
-  const rate = 22050;
-  const count = Math.round(rate * seconds);
-  const bytesPerSample = bits / 8;
-  const buffer = new ArrayBuffer(44 + count * bytesPerSample);
-  const view = new DataView(buffer);
-  const text = (offset: number, value: string) => [...value].forEach((char, i) => view.setUint8(offset + i, char.charCodeAt(0)));
-  text(0, "RIFF");
-  view.setUint32(4, buffer.byteLength - 8, true);
-  text(8, "WAVE");
-  text(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, rate, true);
-  view.setUint32(28, rate * bytesPerSample, true);
-  view.setUint16(32, bytesPerSample, true);
-  view.setUint16(34, bits, true);
-  text(36, "data");
-  view.setUint32(40, count * bytesPerSample, true);
-  for (let i = 0; i < count && bits === 16; i += 1) view.setInt16(44 + i * 2, Math.round(Math.sin(i / 8) * 8000), true);
-  return new Uint8Array(buffer);
-}
 
 
 describe("loadAudio", () => {
@@ -132,7 +109,7 @@ describe("WAV to MP3", () => {
   const mp3Head = async (audio: Blob) => [...new Uint8Array(await audio.slice(0, 2).arrayBuffer())];
 
   it("tells WAV from MP3 by the file's first bytes", async () => {
-    expect(await isWav(new Blob([wavBytes()]))).toBe(true);
+    expect(await isWav(wavBlob())).toBe(true);
     expect(await isWav(new Blob([new Uint8Array([0xff, 0xfb, 0x90, 0x00])]))).toBe(false);
     expect(await isWav(new Blob([new TextEncoder().encode("ID3")]))).toBe(false);
     expect(await isWav(new Blob([]))).toBe(false);
@@ -143,8 +120,9 @@ describe("WAV to MP3", () => {
     expect(await toMp3(mp3)).toBe(mp3);
   });
 
-  it("converts WAV to real MP3", async () => {
-    const converted = await toMp3(new Blob([wavBytes()], { type: "audio/mpeg" }));
+  it("converts WAV to real MP3 on the page when there are no workers, as in these tests", async () => {
+    expect(typeof Worker).toBe("undefined");
+    const converted = await toMp3(wavBlob({ type: "audio/mpeg" }));
     expect(converted.type).toBe("audio/mpeg");
     expect(await isWav(converted)).toBe(false);
     const [first = 0, second = 0] = await mp3Head(converted);
@@ -154,19 +132,114 @@ describe("WAV to MP3", () => {
 
   it("keeps the WAV when it can't be converted, rather than losing the audio", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const odd = new Blob([wavBytes({ bits: 8 })]);
+    const odd = wavBlob({ bits: 8 });
     expect(await toMp3(odd)).toBe(odd);
     expect(warn).toHaveBeenCalledTimes(1);
     warn.mockRestore();
   });
 
+  it("keeps the audio when even checking its type fails, as in browsers without Blob.arrayBuffer", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const audio = new Blob([new Uint8Array([0xff, 0xfb, 0x90, 0x00])], { type: "audio/mpeg" });
+    vi.spyOn(audio, "slice").mockImplementation(() => {
+      throw new TypeError("arrayBuffer is not a function");
+    });
+    expect(await toMp3(audio)).toBe(audio);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
   it("converts WAV downloads once, and keeps the MP3", async () => {
-    const counter = serve(FILE, () => new HttpResponse(wavBytes(), { headers: { "Content-Type": "audio/mpeg" } }));
+    const counter = serve(FILE, () => new HttpResponse(wavFile({ samples: Array.from({ length: 4410 }, (_, i) => (i % 50) * 200) }), {
+      headers: { "Content-Type": "audio/mpeg" },
+    }));
     const first = await loadAudio(FILE);
     const second = await loadAudio(FILE);
     expect(await isWav(first)).toBe(false);
     expect(first.type).toBe("audio/mpeg");
     expect(second).toBe(first);
     expect(counter.calls).toBe(1);
+  });
+});
+
+/**
+ * Stands in for the browser's Worker: answers like mp3Worker.ts, converting on this thread, or
+ * fails to load like a worker an old browser can't start.
+ */
+class FakeWorker {
+  static created: FakeWorker[] = [];
+  static failToLoad = false;
+  onmessage: ((event: { data: unknown }) => void) | null = null;
+  onerror: ((event: { message: string; preventDefault: () => void }) => void) | null = null;
+  readonly url: string;
+  readonly messages: Array<{ id: number; wav: ArrayBuffer }> = [];
+  terminated = false;
+
+  constructor(url: URL | string) {
+    this.url = String(url);
+    FakeWorker.created.push(this);
+  }
+
+  postMessage(message: { id: number; wav: ArrayBuffer }) {
+    this.messages.push(message);
+    setTimeout(async () => {
+      if (FakeWorker.failToLoad) {
+        this.onerror?.({ message: "Module workers aren't supported.", preventDefault: () => undefined });
+        return;
+      }
+      const { wavToMp3 } = await import("./wavToMp3");
+      try {
+        const mp3 = await (await wavToMp3(new Blob([message.wav]))).arrayBuffer();
+        this.onmessage?.({ data: { id: message.id, mp3 } });
+      } catch (error) {
+        this.onmessage?.({ data: { id: message.id, error: (error as Error).message } });
+      }
+    });
+  }
+
+  terminate() {
+    this.terminated = true;
+  }
+}
+
+describe("WAV to MP3 in a worker", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    FakeWorker.created = [];
+    FakeWorker.failToLoad = false;
+    vi.stubGlobal("Worker", FakeWorker);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("converts in the worker, matching each reply to its file", async () => {
+    const { isWav: isWavFresh, toMp3: toMp3Fresh } = await import("./audio");
+    const [one, two] = await Promise.all([toMp3Fresh(wavBlob()), toMp3Fresh(wavBlob({ seconds: 0.5 }))]);
+    expect(FakeWorker.created).toHaveLength(1);
+    expect(FakeWorker.created[0]?.url).toMatch(/mp3Worker\.ts$/);
+    expect(FakeWorker.created[0]?.messages.map((message) => message.id)).toEqual([1, 2]);
+    expect(await isWavFresh(one as Blob)).toBe(false);
+    expect((two as Blob).size).toBeGreaterThan((one as Blob).size);
+  });
+
+  it("falls back to converting on the page when the worker can't load, and stops using it", async () => {
+    FakeWorker.failToLoad = true;
+    const { isWav: isWavFresh, toMp3: toMp3Fresh } = await import("./audio");
+    const converted = await toMp3Fresh(wavBlob());
+    expect(await isWavFresh(converted)).toBe(false);
+    expect(FakeWorker.created[0]?.terminated).toBe(true);
+    await toMp3Fresh(wavBlob());
+    expect(FakeWorker.created).toHaveLength(1);
+    expect(FakeWorker.created[0]?.messages).toHaveLength(1);
+  });
+
+  it("keeps the WAV when neither the worker nor the page can convert it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { toMp3: toMp3Fresh } = await import("./audio");
+    const odd = wavBlob({ bits: 8 });
+    expect(await toMp3Fresh(odd)).toBe(odd);
+    warn.mockRestore();
   });
 });

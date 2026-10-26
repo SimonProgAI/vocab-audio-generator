@@ -94,17 +94,23 @@ src/
   whose audio didn't get slower at 0.5× and faster at 2× are labeled "ignores speed"
   (`IGNORES_SPEED`); of the French voices, only kokoro, melotts and piper follow it
   (`FOLLOWS_SPEED`). Voices nobody has checked aren't assumed to follow it.
-- **Sort voices**: four checkboxes apply to every speaker list (`arrangeVoices` in
-  `utils/voices.ts`). **Tested voices only** hides voices that weren't checked (every language but
-  French). **Price, low to high** groups by price tier. **Responds to speed control** keeps only
-  kokoro, melotts and piper. **By name (A–Z)** sorts by name, inside each price group when both
-  are on; with it off, voices keep TTS.ai's order. A first visit, and **Reset**, start with
-  Tested voices only and By name. A list the boxes leave empty says why.
-- **Real MP3s**: piper, vits and bark-small return WAV even though the app asks for MP3 (TTS.ai
-  still labels it `audio/mpeg`). The first time such a file is played, downloaded or zipped, the
-  browser converts it to 64 kbps MP3 (`services/wavToMp3.ts`); loud float audio is turned down to
-  fit rather than clipped. If converting fails, the WAV is kept. The encoder is a separate file,
-  loaded only when a WAV turns up.
+- **Sort voices**: four checkboxes apply to every speaker list (`arrangeVoiceList` in
+  `utils/voices.ts`, worked out once in `App` and shared by every picker). **Tested voices only**
+  hides voices that weren't checked (every language but French). **Price, low to high** groups by
+  price tier. **Responds to speed control** keeps only kokoro, melotts and piper. **By name
+  (A–Z)** sorts by name, inside each price group when both are on; with it off, voices keep
+  TTS.ai's order. A first visit, and **Reset**, start with Tested voices only and By name. A list
+  the boxes leave empty says which box did it. Voices you picked that the language or the boxes
+  now hide stay in the voice pool, under "Selected, but hidden…", so they can still be unticked.
+  The language counts follow the boxes too: "English (0 of 40)".
+- **Real MP3s**: piper and vits return WAV even though the app asks for MP3 (TTS.ai still labels
+  it `audio/mpeg`); so does bark-small, still listed for other languages. The first time such a
+  file is played, downloaded or zipped, it's converted to 64 kbps MP3 (`services/wavToMp3.ts`) in
+  a background worker (`services/mp3Worker.ts`), so a big ZIP doesn't freeze the page; browsers
+  that can't run it convert on the page instead. Loud or broken float samples are turned down or
+  silenced rather than clipped, a WAV that declares no data size is read to its end, and if
+  anything fails the original audio is kept. Voice samples are only played, so they aren't
+  converted.
 - **Voice tiers**: the voice list has no prices, so `utils/voices.ts` maps each model to TTS.ai's
   price tier (free = 1 credit per character, standard = 2, premium = 4), measured with
   `npm run benchmark:voices`. **Price, low to high** groups every speaker list by tier;
@@ -177,7 +183,9 @@ key ships with the site. A key a visitor ticks **Remember** for is kept in `loca
 - **Slow speakers**: some speakers take an excessively long time to generate files.
   `npm run benchmark:voices` measures this (see [Benchmarking voices](#benchmarking-voices)).
 - **Failing speakers**: French voices that failed or didn't speak French reliably are hidden (see
-  **Voice quality** above). Re-check them now and then: TTS.ai changes its models.
+  **Voice quality** above). A session saved before a voice was hidden drops it from the speaker
+  settings and from rows still waiting for audio; rows that have audio keep it, under the voice's
+  name. Re-check the voices now and then: TTS.ai changes its models.
 - **Speed**: 5 of the 8 remaining French voices ignore the speed setting; their labels say so.
 
 ## TODO
@@ -189,5 +197,6 @@ Nothing open right now.
 MIT. See [LICENSE](LICENSE).
 
 The MP3 encoder, [`@breezystack/lamejs`](https://www.npmjs.com/package/@breezystack/lamejs) (a
-JavaScript port of LAME), is LGPL-3.0. It's built into its own file (`assets/wavToMp3-*.js`), so
-it can be replaced without touching the rest of the app.
+JavaScript port of LAME), is LGPL-3.0. It's built into its own files (`assets/mp3Worker-*.js`
+for the background worker, and `assets/wavToMp3-*.js` for browsers without one), so it can be
+replaced without touching the rest of the app.

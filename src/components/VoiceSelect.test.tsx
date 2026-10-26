@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Voice } from "../types/queue";
-import type { VoiceListOptions } from "../utils/voices";
+import { arrangeVoiceList, type VoiceListOptions } from "../utils/voices";
 import { VoiceSelect } from "./VoiceSelect";
 
 const piper: Voice = { key: "piper:fr_FR-siwis-medium", id: "fr_FR-siwis-medium", name: "Siwis", language: "fr", model: "piper" };
@@ -20,9 +20,8 @@ function renderSelect(
   const onChange = vi.fn();
   render(
     <VoiceSelect
-      voices={voices}
+      arranged={arrangeVoiceList(voices, voiceList)}
       voicesByKey={voicesByKey}
-      voiceList={voiceList}
       value={value}
       onChange={onChange}
       placeholder="Choose…"
@@ -88,6 +87,21 @@ describe("VoiceSelect", () => {
       ["Choose…", true],
       ["No tested voices here. Only French voices have been tested so far.", true],
     ]);
+  });
+
+  it("still explains an empty list when the chosen voice is the only one left", () => {
+    renderSelect({ ...BY_NAME, testedOnly: true }, { voices: [bark], value: bark.key });
+    expect([...select().querySelectorAll("option")].map((option) => option.text)).toEqual([
+      "Choose…",
+      "English Male (bark)",
+      "No tested voices here. Only French voices have been tested so far.",
+    ]);
+  });
+
+  it("gives the explanation its own value, so only the placeholder means \"nothing chosen\"", () => {
+    renderSelect({ ...BY_NAME, testedOnly: true }, { voices: [bark] });
+    expect([...select().querySelectorAll("option")].filter((option) => option.value === "")).toHaveLength(1);
+    expect(select()).toHaveProperty("value", "");
   });
 
   it("reports the chosen voice key from inside a group", () => {

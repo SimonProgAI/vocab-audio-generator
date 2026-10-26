@@ -4,6 +4,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SAMPLE_TEXT } from "../services/voiceSample";
 import type { QueueItem, QueueStatus, Voice } from "../types/queue";
+import { arrangeVoiceList } from "../utils/voices";
 import { QueueRow } from "./QueueRow";
 
 type OnDownload = (item: QueueItem) => Promise<void>;
@@ -38,9 +39,8 @@ function renderRow(item: QueueItem, overrides: Partial<ComponentProps<typeof Que
     globalSpeed: 1,
     speakerEditable: false,
     assignedSpeaker: "French",
-    voices: [],
+    arranged: { groups: [], shown: new Set() },
     voicesByKey: new Map(),
-    voiceList: { testedOnly: false, byPrice: false, followsSpeed: false, byName: true },
     outdated: false,
     locked: false,
     onEdit: vi.fn(),
@@ -104,7 +104,11 @@ describe("QueueRow speaker picker", () => {
   it("follows the voice order in Per File mode", () => {
     renderRow(
       { ...completed, status: "pending" },
-      { speakerEditable: true, voices, voicesByKey: new Map(voices.map((voice) => [voice.key, voice])), voiceList: { testedOnly: false, byPrice: true, followsSpeed: false, byName: true } },
+      {
+        speakerEditable: true,
+        arranged: arrangeVoiceList(voices, { testedOnly: false, byPrice: true, followsSpeed: false, byName: true }),
+        voicesByKey: new Map(voices.map((voice) => [voice.key, voice])),
+      },
     );
     const picker = screen.getByRole("combobox", { name: "Speaker, row 1" });
     expect([...picker.querySelectorAll("optgroup")].map((group) => group.label)).toEqual([

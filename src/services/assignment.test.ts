@@ -170,6 +170,23 @@ describe("planGeneration", () => {
     });
   });
 
+  it("doesn't ask for a speaker on a Per File row that already has its audio", () => {
+    // E.g. made with a voice that has since been hidden: the audio is fine and the row is skipped.
+    const items = [
+      item({ id: "a", status: "completed", speaker: "bark:v2/fr_speaker_0", generatedWith: { speaker: "bark:v2/fr_speaker_0", speed: 1 } }),
+      item({ id: "b", speaker: MELO }),
+    ];
+    expect(planGeneration(items, config({ mode: "perFile" }), 1, voicesByKey)).toEqual({
+      ok: true,
+      jobs: [{ itemId: "b", text: "bonjour", voice: voicesByKey.get(MELO), speed: 1 }],
+    });
+  });
+
+  it("still asks for a speaker on a Per File row that needs new audio", () => {
+    const items = [item({ status: "completed", speaker: "gone:X", generatedWith: { speaker: "gone:X", speed: 1.5 } })];
+    expect(planGeneration(items, config({ mode: "perFile" }), 1, voicesByKey)).toMatchObject({ ok: false });
+  });
+
   it("builds jobs for rows that need audio and skips rows that are up to date", () => {
     const items = [
       item({ id: "a", text: " un " }),

@@ -190,6 +190,45 @@ describe("parseSession", () => {
     expect(parseSession({ items: [] })?.settings).toEqual({});
   });
 
+  it("drops voices hidden since the session was saved from the speaker settings", () => {
+    expect(
+      parseSession({
+        items: [],
+        settings: {
+          config: {
+            mode: "roundRobin",
+            singleSpeaker: "bark:v2/fr_speaker_0",
+            selectedVoices: ["bark:v2/fr_speaker_0", "piper:fr_FR-siwis-medium", "pocket-tts:jean_fr"],
+          },
+        },
+      })?.settings.config,
+    ).toEqual({ mode: "roundRobin", singleSpeaker: undefined, selectedVoices: ["piper:fr_FR-siwis-medium"] });
+  });
+
+  it("lets rows still waiting for audio forget a hidden voice, but keeps it on rows that have audio", () => {
+    const hidden = "bark:v2/fr_speaker_0";
+    const restored = parseSession({
+      items: [
+        row({ id: "waiting", speaker: hidden }),
+        row({ id: "failed", status: "failed", speaker: hidden, error: "Voice crashed" }),
+        row({ id: "done", status: "completed", speaker: hidden, downloadUrl: "https://cdn.tts.ai/a.mp3", generatedWith: { speaker: hidden, speed: 1 } }),
+        row({ id: "running", status: "processing", jobId: "job-1", speaker: hidden }),
+      ],
+    });
+    expect(restored?.items.map((item) => [item.id, item.speaker])).toEqual([
+      ["waiting", undefined],
+      ["failed", undefined],
+      ["done", hidden],
+      ["running", hidden],
+    ]);
+  });
+
+  it("refuses an old Sort voices value that only matches by accident, like a built-in property name", () => {
+    for (const voiceOrder of ["constructor", "toString", "__proto__"]) {
+      expect(parseSession({ items: [], settings: { voiceOrder } })?.settings).toEqual({});
+    }
+  });
+
   it("restores the Sort voices boxes, using the default for any missing or broken one", () => {
     expect(parseSession({ items: [], settings: { voiceList: { byPrice: true, testedOnly: "yes" } } })?.settings).toEqual({
       voiceList: { testedOnly: true, byPrice: true, followsSpeed: false, byName: true },

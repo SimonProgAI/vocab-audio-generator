@@ -3,11 +3,16 @@ import type { Voice } from "../types/queue";
 import {
   DEFAULT_VOICE_LIST,
   arrangeVoices,
+  arrangeVoiceList,
   emptyListMessage,
   followsSpeed,
+  formatLanguageCount,
   formatVoiceLabel,
   ignoresSpeed,
   isHiddenVoice,
+  passesFilters,
+  summarizeLanguages,
+  voiceName,
   voiceTier,
   wasTested,
   type VoiceListOptions,
@@ -199,11 +204,87 @@ describe("DEFAULT_VOICE_LIST", () => {
 });
 
 describe("emptyListMessage", () => {
-  it("explains which box emptied the list", () => {
-    expect(emptyListMessage({ ...OFF, testedOnly: true, followsSpeed: true })).toBe(
-      "No tested voices here. Only French voices have been tested so far.",
-    );
-    expect(emptyListMessage({ ...OFF, followsSpeed: true })).toBe("None of these voices is known to respond to speed control.");
-    expect(emptyListMessage(OFF)).toBe("No voices to show.");
+  const xavier: Voice = { key: "xtts:fr_test", id: "fr_test", name: "Xavier", language: "fr", model: "xtts" };
+  const openvoice: Voice = { key: "openvoice:FR", id: "FR", name: "French", language: "fr", model: "openvoice" };
+  const both: VoiceListOptions = { ...OFF, testedOnly: true, followsSpeed: true };
+
+  it("blames Tested voices only when no tested voice is there", () => {
+    expect(emptyListMessage([xavier], both)).toBe("No tested voices here. Only French voices have been tested so far.");
+  });
+
+  it("blames Responds to speed control when tested voices are there but none responds", () => {
+    expect(emptyListMessage([openvoice, xavier], both)).toBe("None of these voices is known to respond to speed control.");
+    expect(emptyListMessage([openvoice], { ...OFF, followsSpeed: true })).toBe("None of these voices is known to respond to speed control.");
+  });
+
+  it("says so when the language has no voices at all", () => {
+    expect(emptyListMessage([], both)).toBe("No voices to show yet.");
+  });
+});
+
+describe("arrangeVoiceList", () => {
+  const voices: Voice[] = [
+    { key: "openvoice:FR", id: "FR", name: "French", language: "fr", model: "openvoice" },
+    { key: "piper:fr_FR-siwis-medium", id: "fr_FR-siwis-medium", name: "Siwis", language: "fr", model: "piper" },
+  ];
+
+  it("lists the shown keys, with no message", () => {
+    const arranged = arrangeVoiceList(voices, { ...OFF, byName: true });
+    expect([...arranged.shown]).toEqual(["openvoice:FR", "piper:fr_FR-siwis-medium"]);
+    expect(arranged.emptyMessage).toBeUndefined();
+  });
+
+  it("explains an empty list", () => {
+    const arranged = arrangeVoiceList(voices.slice(0, 1), { ...OFF, followsSpeed: true });
+    expect(arranged).toEqual({ groups: [], shown: new Set(), emptyMessage: "None of these voices is known to respond to speed control." });
+  });
+});
+
+describe("passesFilters", () => {
+  it("applies Tested voices only and Responds to speed control, and nothing else", () => {
+    const piper = { key: "piper:fr_FR-siwis-medium" };
+    const vits = { key: "vits:css10_fr" };
+    const english = { key: "bark:v2/en_speaker_0" };
+    expect([piper, vits, english].map((v) => passesFilters(v, { ...OFF, testedOnly: true }))).toEqual([true, true, false]);
+    expect([piper, vits, english].map((v) => passesFilters(v, { ...OFF, followsSpeed: true }))).toEqual([true, false, false]);
+    expect([piper, vits, english].map((v) => passesFilters(v, { ...OFF, byPrice: true, byName: true }))).toEqual([true, true, true]);
+  });
+});
+
+describe("summarizeLanguages", () => {
+  const voices: Voice[] = [
+    { key: "piper:fr_FR-siwis-medium", id: "fr_FR-siwis-medium", name: "Siwis", language: "fr-FR", model: "piper" },
+    { key: "xtts:fr_test", id: "fr_test", name: "Xavier", language: "fr", model: "xtts" },
+    { key: "bark:v2/en_speaker_0", id: "v2/en_speaker_0", name: "English Male 1", language: "en", model: "bark" },
+  ];
+
+  it("counts every voice per language by default", () => {
+    expect(summarizeLanguages(voices)).toEqual([
+      { code: "en", label: "English", count: 1, total: 1 },
+      { code: "fr", label: "French", count: 2, total: 2 },
+    ]);
+  });
+
+  it("counts only the voices the boxes let through, keeping languages with none", () => {
+    expect(summarizeLanguages(voices, (voice) => passesFilters(voice, { ...OFF, testedOnly: true }))).toEqual([
+      { code: "en", label: "English", count: 0, total: 1 },
+      { code: "fr", label: "French", count: 1, total: 2 },
+    ]);
+  });
+
+  it("shows a count as 'n of total' only when some are hidden", () => {
+    expect(formatLanguageCount({ count: 8, total: 8 })).toBe("8");
+    expect(formatLanguageCount({ count: 0, total: 40 })).toBe("0 of 40");
+  });
+});
+
+describe("voiceName", () => {
+  const voicesByKey = new Map([["piper:fr_FR-siwis-medium", { key: "piper:fr_FR-siwis-medium", id: "fr_FR-siwis-medium", name: "Siwis", language: "fr", model: "piper" }]]);
+
+  it("uses the voice's name, then a hidden voice's name, then the key", () => {
+    expect(voiceName("piper:fr_FR-siwis-medium", voicesByKey)).toBe("Siwis");
+    expect(voiceName("bark:v2/fr_speaker_0", voicesByKey)).toBe("French Speaker 1");
+    expect(voiceName("pocket-tts:jean_fr", voicesByKey)).toBe("Jean (French)");
+    expect(voiceName("someone:else", voicesByKey)).toBe("someone:else");
   });
 });

@@ -12,11 +12,12 @@ import {
 } from "../utils/speed";
 import {
   ALL_LANGUAGES,
-  arrangeVoices,
+  formatLanguageCount,
   formatVoiceLabel,
   voiceName,
   type LanguageSummary,
-  emptyListMessage,
+  type ArrangedVoices,
+  type VoiceGroup,
   VOICE_LIST_CHECKBOXES,
   type VoiceListOptions,
 } from "../utils/voices";
@@ -31,8 +32,8 @@ interface SpeakerSettingsProps {
   voiceStatus: VoiceLoadStatus;
   voiceError?: string;
   onRetryVoices: () => void;
-  /** Voices matching the language filter. */
-  voices: Voice[];
+  /** Voices matching the language filter, arranged by the Sort voices boxes. */
+  arranged: ArrangedVoices;
   voicesByKey: ReadonlyMap<string, Voice>;
   languages: LanguageSummary[];
   language: string;
@@ -65,7 +66,7 @@ function SpeakerSettingsComponent({
   voiceStatus,
   voiceError,
   onRetryVoices,
-  voices,
+  arranged,
   voicesByKey,
   languages,
   language,
@@ -85,6 +86,10 @@ function SpeakerSettingsComponent({
   const pickersDisabled = disabled || voiceStatus !== "ready";
 
   const update = (changes: Partial<SpeakerConfig>) => onConfigChange({ ...config, ...changes });
+  const totals = languages.reduce(
+    (sum, entry) => ({ count: sum.count + entry.count, total: sum.total + entry.total }),
+    { count: 0, total: 0 },
+  );
 
   const toggleVoice = (voiceKey: string) =>
     update({
@@ -98,7 +103,7 @@ function SpeakerSettingsComponent({
     update({
       selectedVoices: [
         ...config.selectedVoices,
-        ...arrangeVoices(voices, voiceList)
+        ...arranged.groups
           .flatMap((group) => group.voices.map((voice) => voice.key))
           .filter((key) => !config.selectedVoices.includes(key)),
       ],
@@ -109,8 +114,8 @@ function SpeakerSettingsComponent({
 
   const checklist = (
     <VoiceChecklist
-      voices={voices}
-      voiceList={voiceList}
+      arranged={arranged}
+      voicesByKey={voicesByKey}
       selected={config.selectedVoices}
       onToggle={toggleVoice}
       onSelectAll={selectAllShown}
@@ -165,9 +170,8 @@ function SpeakerSettingsComponent({
                 </label>
                 <VoiceSelect
                   id={singleSpeakerId}
-                  voices={voices}
+                  arranged={arranged}
                   voicesByKey={voicesByKey}
-                  voiceList={voiceList}
                   value={config.singleSpeaker}
                   onChange={(id) => update({ singleSpeaker: id })}
                   placeholder="Choose a speaker…"
@@ -207,10 +211,10 @@ function SpeakerSettingsComponent({
               disabled={pickersDisabled}
               className={FIELD_CLASS}
             >
-              <option value={ALL_LANGUAGES}>All languages ({voicesByKey.size})</option>
+              <option value={ALL_LANGUAGES}>All languages ({formatLanguageCount(totals)})</option>
               {languages.map((entry) => (
                 <option key={entry.code} value={entry.code}>
-                  {entry.label} ({entry.count})
+                  {entry.label} ({formatLanguageCount(entry)})
                 </option>
               ))}
             </select>
@@ -221,7 +225,9 @@ function SpeakerSettingsComponent({
                 </span>
               )}
               {voiceStatus === "ready" &&
-                `${pluralize(voicesByKey.size, "voice")} loaded. The filter applies to every speaker list.`}
+                (totals.count === totals.total
+                  ? `${pluralize(totals.total, "voice")} loaded. The language and Sort voices apply to every speaker list.`
+                  : `${pluralize(totals.total, "voice")} loaded, ${totals.count} let through by Sort voices. Both apply to every speaker list.`)}
             </div>
             {voiceStatus === "error" && (
               <div className="mt-2">
@@ -311,8 +317,8 @@ function SpeakerSettingsComponent({
 export const SpeakerSettings = memo(SpeakerSettingsComponent);
 
 interface VoiceChecklistProps {
-  voices: Voice[];
-  voiceList: VoiceListOptions;
+  arranged: ArrangedVoices;
+  voicesByKey: ReadonlyMap<string, Voice>;
   selected: string[];
   onToggle: (voiceKey: string) => void;
   onSelectAll: () => void;
@@ -320,9 +326,19 @@ interface VoiceChecklistProps {
   disabled: boolean;
 }
 
-function VoiceChecklist({ voices, voiceList, selected, onToggle, onSelectAll, onClear, disabled }: VoiceChecklistProps) {
+const HIDDEN_PICKS = "Selected, but hidden by the language or Sort voices";
+
+function VoiceChecklist({ arranged, voicesByKey, selected, onToggle, onSelectAll, onClear, disabled }: VoiceChecklistProps) {
   const selectedKeys = new Set(selected);
-  const groups = arrangeVoices(voices, voiceList);
+  // Picked voices the language or the boxes now hide are still in the pool, so they keep a
+  // checkbox (in a group of their own) and can be unticked.
+  const hiddenPicks = selected
+    .filter((key) => !arranged.shown.has(key))
+    .map((key): Voice => voicesByKey.get(key) ?? { key, id: key, name: voiceName(key, voicesByKey), language: "" });
+  const groups: VoiceGroup[] = [
+    ...(hiddenPicks.length > 0 ? [{ key: "hidden-picks", label: HIDDEN_PICKS, voices: hiddenPicks }] : []),
+    ...arranged.groups,
+  ];
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
@@ -330,7 +346,7 @@ function VoiceChecklist({ voices, voiceList, selected, onToggle, onSelectAll, on
           Voice pool <span className="font-normal text-slate-500">({selected.length} selected)</span>
         </span>
         <div className="flex gap-1">
-          <Button size="sm" variant="ghost" onClick={onSelectAll} disabled={disabled || groups.length === 0}>
+          <Button size="sm" variant="ghost" onClick={onSelectAll} disabled={disabled || arranged.groups.length === 0}>
             Select all shown
           </Button>
           <Button size="sm" variant="ghost" onClick={onClear} disabled={disabled || selected.length === 0}>
@@ -338,11 +354,12 @@ function VoiceChecklist({ voices, voiceList, selected, onToggle, onSelectAll, on
           </Button>
         </div>
       </div>
-      {groups.length === 0 ? (
+      {arranged.emptyMessage && (
         <p className="mt-2 rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-          {voices.length === 0 ? "No voices to show yet." : emptyListMessage(voiceList)}
+          {arranged.emptyMessage}
         </p>
-      ) : (
+      )}
+      {groups.length > 0 && (
         <div
           role="group"
           aria-label="Voice pool"

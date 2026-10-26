@@ -1,4 +1,5 @@
 import { downloadAudio, toTtsApiError } from "./ttsApi";
+import { isWavHeader } from "./wavHeader";
 
 /**
  * Finished audio files (converted to MP3 when TTS.ai sent WAV), kept in memory per URL so playing
@@ -18,26 +19,85 @@ export function loadAudio(url: string): Promise<Blob> {
   return pending;
 }
 
-/** WAV files start with "RIFF", four size bytes, then "WAVE". */
 export async function isWav(audio: Blob): Promise<boolean> {
-  const head = new Uint8Array(await audio.slice(0, 12).arrayBuffer());
-  const text = (from: number, to: number) => String.fromCharCode(...head.subarray(from, to));
-  return text(0, 4) === "RIFF" && text(8, 12) === "WAVE";
+  return isWavHeader(new Uint8Array(await audio.slice(0, 12).arrayBuffer()));
+}
+
+// ---------------------------------------------------------------------------
+// WAV → MP3, in a background worker so a big ZIP doesn't freeze the page
+// ---------------------------------------------------------------------------
+
+interface WorkerReply {
+  id: number;
+  mp3?: ArrayBuffer;
+  error?: string;
+}
+
+/** undefined: not started yet; null: unavailable (no Worker, or it failed), so convert on the page. */
+let worker: Worker | null | undefined;
+let nextJob = 0;
+const jobs = new Map<number, { resolve: (mp3: Blob) => void; reject: (error: Error) => void }>();
+
+function conversionWorker(): Worker | null {
+  if (worker !== undefined) return worker;
+  try {
+    worker = typeof Worker === "undefined" ? null : new Worker(new URL("./mp3Worker.ts", import.meta.url), { type: "module" });
+  } catch {
+    worker = null;
+  }
+  if (!worker) return null;
+  worker.onmessage = ({ data }: MessageEvent<WorkerReply>) => {
+    const job = jobs.get(data.id);
+    jobs.delete(data.id);
+    if (data.mp3) job?.resolve(new Blob([data.mp3], { type: "audio/mpeg" }));
+    else job?.reject(new Error(data.error ?? "The MP3 converter gave no result."));
+  };
+  // The worker couldn't load (old browser, blocked) or crashed: fail what's waiting, stop using it.
+  worker.onerror = (event) => {
+    event.preventDefault();
+    for (const job of jobs.values()) job.reject(new Error(event.message || "The MP3 converter stopped."));
+    jobs.clear();
+    worker?.terminate();
+    worker = null;
+  };
+  return worker;
+}
+
+async function convertInWorker(converter: Worker, wav: Blob): Promise<Blob> {
+  const bytes = await wav.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    const id = (nextJob += 1);
+    jobs.set(id, { resolve, reject });
+    converter.postMessage({ id, wav: bytes }, [bytes]);
+  });
+}
+
+async function convertOnPage(wav: Blob): Promise<Blob> {
+  const { wavToMp3 } = await import("./wavToMp3");
+  return wavToMp3(wav);
 }
 
 /**
- * Some models (piper, vits, bark-small) return WAV even though the app asks TTS.ai for MP3, so
- * WAV is converted here and every saved `.mp3` really is one. MP3 passes through untouched. The
- * encoder (LAME, LGPL-3.0) is loaded on first use, as its own file. If converting fails, the WAV
- * is kept rather than losing the audio.
+ * Some models (piper and vits; bark-small too, still listed for other languages) return WAV even
+ * though the app asks TTS.ai for MP3, so WAV is converted here and every saved `.mp3` really is
+ * one. MP3 passes through untouched. The encoder (LAME, LGPL-3.0) runs in its own worker file,
+ * or on the page where workers aren't available. If anything fails, even checking the file's
+ * type, the original audio is kept rather than lost.
  */
 export async function toMp3(audio: Blob): Promise<Blob> {
-  if (!(await isWav(audio))) return audio;
   try {
-    const { wavToMp3 } = await import("./wavToMp3");
-    return await wavToMp3(audio);
+    if (!(await isWav(audio))) return audio;
+    const converter = conversionWorker();
+    if (converter) {
+      try {
+        return await convertInWorker(converter, audio);
+      } catch {
+        // Fall through and try on the page.
+      }
+    }
+    return await convertOnPage(audio);
   } catch (error) {
-    console.warn("Couldn't convert WAV audio to MP3, so it stays WAV.", error);
+    console.warn("Couldn't convert WAV audio to MP3, so it stays as it is.", error);
     return audio;
   }
 }

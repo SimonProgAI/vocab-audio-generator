@@ -1,7 +1,7 @@
 import type { AssignmentMode, GenerationSnapshot, QueueItem, QueueStatus, SpeakerConfig } from "../types/queue";
 import type { CreditUsage } from "../utils/credits";
 import { MAX_SPEED, MIN_SPEED } from "../utils/speed";
-import { DEFAULT_VOICE_LIST, type VoiceListOptions } from "../utils/voices";
+import { DEFAULT_VOICE_LIST, isHiddenVoice, type VoiceListOptions } from "../utils/voices";
 
 /**
  * The queue, the Bulk Import text and the settings are kept in sessionStorage, so a refresh or an
@@ -142,13 +142,16 @@ function parseItem(value: unknown): QueueItem | undefined {
   };
 }
 
+const isUsableKey = (key: unknown): key is string => typeof key === "string" && !isHiddenVoice({ key });
+
+/** Voices hidden since the session was saved are dropped, so generating isn't blocked by them. */
 function parseConfig(value: unknown): SpeakerConfig | undefined {
   if (!isRecord(value) || !isMode(value.mode)) return undefined;
   const selected = Array.isArray(value.selectedVoices) ? value.selectedVoices : [];
   return {
     mode: value.mode,
-    singleSpeaker: optionalString(value.singleSpeaker),
-    selectedVoices: selected.filter((key): key is string => typeof key === "string"),
+    singleSpeaker: isUsableKey(value.singleSpeaker) ? value.singleSpeaker : undefined,
+    selectedVoices: selected.filter(isUsableKey),
   };
 }
 
@@ -162,11 +165,11 @@ function parseCredits(value: unknown): CreditUsage | undefined {
 }
 
 /** Before the checkboxes, a "Sort voices" dropdown saved one of these. */
-const OLD_VOICE_ORDERS: Readonly<Record<string, Partial<VoiceListOptions>>> = {
-  name: {},
-  tier: { byPrice: true },
-  followsSpeed: { byPrice: true, followsSpeed: true },
-};
+const OLD_VOICE_ORDERS: ReadonlyMap<string, Partial<VoiceListOptions>> = new Map([
+  ["name", {}],
+  ["tier", { byPrice: true }],
+  ["followsSpeed", { byPrice: true, followsSpeed: true }],
+]);
 
 function parseVoiceList(value: unknown, oldOrder: unknown): VoiceListOptions | undefined {
   if (isRecord(value)) {
@@ -177,7 +180,7 @@ function parseVoiceList(value: unknown, oldOrder: unknown): VoiceListOptions | u
     }
     return options;
   }
-  const old = typeof oldOrder === "string" ? OLD_VOICE_ORDERS[oldOrder] : undefined;
+  const old = typeof oldOrder === "string" ? OLD_VOICE_ORDERS.get(oldOrder) : undefined;
   return old ? { ...DEFAULT_VOICE_LIST, testedOnly: false, ...old } : undefined;
 }
 
@@ -210,6 +213,15 @@ function restoreInterrupted(item: QueueItem): QueueItem {
     : item;
 }
 
+/**
+ * A row still waiting for audio forgets a voice hidden since it was saved, so it asks for a new
+ * one instead of failing. Rows with audio (or a job already running) keep theirs.
+ */
+function forgetHiddenSpeaker(item: QueueItem): QueueItem {
+  const waiting = item.status === "pending" || item.status === "failed";
+  return waiting && item.speaker && isHiddenVoice({ key: item.speaker }) ? { ...item, speaker: undefined } : item;
+}
+
 /** Invalid rows are dropped and invalid settings are left out, rather than losing everything. */
 export function parseSession(data: unknown): RestoredSession | undefined {
   if (!isRecord(data) || !Array.isArray(data.items)) return undefined;
@@ -220,7 +232,7 @@ export function parseSession(data: unknown): RestoredSession | undefined {
     const item = parseItem(value);
     if (!item || ids.has(item.id)) continue;
     ids.add(item.id);
-    const restored = restoreInterrupted(item);
+    const restored = forgetHiddenSpeaker(restoreInterrupted(item));
     if (isGenerating(restored)) interrupted += 1;
     items.push(restored);
   }

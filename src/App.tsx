@@ -29,7 +29,15 @@ import type { QueueItem, SpeakerConfig, Voice } from "./types/queue";
 import { NO_CREDITS_USED, recordCredits, type CreditUsage } from "./utils/credits";
 import { pluralize } from "./utils/format";
 import { DEFAULT_SPEED, effectiveSpeed } from "./utils/speed";
-import { DEFAULT_VOICE_LIST, defaultLanguage, matchesLanguage, summarizeLanguages, type VoiceListOptions } from "./utils/voices";
+import {
+  DEFAULT_VOICE_LIST,
+  arrangeVoiceList,
+  defaultLanguage,
+  matchesLanguage,
+  passesFilters,
+  summarizeLanguages,
+  type VoiceListOptions,
+} from "./utils/voices";
 
 function summarizeRun({ completed, failed, stoppedByUser, fatalError }: GenerationSummary): NoticeContent {
   if (fatalError) {
@@ -137,12 +145,17 @@ export default function App() {
     retainAudio(new Set(items.flatMap((item) => (item.downloadUrl ? [item.downloadUrl] : []))));
   }, [items]);
 
-  const languages = useMemo(() => summarizeLanguages(voiceLibrary.voices), [voiceLibrary.voices]);
+  const languages = useMemo(
+    () => summarizeLanguages(voiceLibrary.voices, (voice) => passesFilters(voice, voiceList)),
+    [voiceLibrary.voices, voiceList],
+  );
   const language = languageChoice ?? defaultLanguage(languages);
   const visibleVoices = useMemo(
     () => voiceLibrary.voices.filter((voice) => matchesLanguage(voice, language)),
     [voiceLibrary.voices, language],
   );
+  // Arranged once here and shared, rather than sorted again by every picker on every render.
+  const arrangedVoices = useMemo(() => arrangeVoiceList(visibleVoices, voiceList), [visibleVoices, voiceList]);
   const outdatedIds = useMemo(
     () =>
       new Set(
@@ -343,7 +356,7 @@ export default function App() {
           voiceStatus={voiceLibrary.status}
           voiceError={voiceLibrary.error}
           onRetryVoices={voiceLibrary.reload}
-          voices={visibleVoices}
+          arranged={arrangedVoices}
           voicesByKey={voiceLibrary.voicesByKey}
           languages={languages}
           language={language}
@@ -360,9 +373,8 @@ export default function App() {
         <QueueTable
           items={items}
           config={config}
-          voices={visibleVoices}
+          arranged={arrangedVoices}
           voicesByKey={voiceLibrary.voicesByKey}
-          voiceList={voiceList}
           globalSpeed={globalSpeed}
           outdatedIds={outdatedIds}
           locked={generation.isGenerating}

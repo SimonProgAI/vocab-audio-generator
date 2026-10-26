@@ -9,7 +9,7 @@ import { SESSION_KEY, saveSession, type SessionSnapshot } from "./services/sessi
 import { clearVoiceSamples } from "./services/voiceSample";
 import { server } from "./test/server";
 import type { QueueItem } from "./types/queue";
-import { DEFAULT_VOICE_LIST, arrangeVoices } from "./utils/voices";
+import { DEFAULT_VOICE_LIST, arrangeVoiceList } from "./utils/voices";
 
 // Wrapped, not replaced: each is called whenever the queue or the speaker lists render.
 vi.mock("./services/assignment", async (importOriginal) => {
@@ -22,7 +22,7 @@ vi.mock("./services/audio", async (importOriginal) => {
 });
 vi.mock("./utils/voices", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./utils/voices")>();
-  return { ...actual, arrangeVoices: vi.fn(actual.arrangeVoices) };
+  return { ...actual, arrangeVoiceList: vi.fn(actual.arrangeVoiceList) };
 });
 
 const API = `${import.meta.env.VITE_TTS_API_ORIGIN}/v1`;
@@ -551,7 +551,7 @@ describe("typing in Bulk Import", () => {
     saveQueue([savedRow({ id: "a" }), savedRow({ id: "b", text: "une rivière" }), savedRow({ id: "c", text: "un village" })]);
     await openApp();
     vi.mocked(previewSpeaker).mockClear();
-    vi.mocked(arrangeVoices).mockClear();
+    vi.mocked(arrangeVoiceList).mockClear();
 
     for (const draft of ["u", "un", "une", "une f"]) {
       fireEvent.change(screen.getByLabelText("Vocabulary list"), { target: { value: draft } });
@@ -559,7 +559,7 @@ describe("typing in Bulk Import", () => {
 
     expect(screen.getByLabelText("Vocabulary list")).toHaveProperty("value", "une f");
     expect(previewSpeaker).not.toHaveBeenCalled();
-    expect(arrangeVoices).not.toHaveBeenCalled();
+    expect(arrangeVoiceList).not.toHaveBeenCalled();
   });
 });
 
@@ -736,6 +736,70 @@ describe("Sort voices checkboxes", () => {
     expect(pickerOptions()).toEqual([
       "Choose a speaker…",
       "No tested voices here. Only French voices have been tested so far.",
+    ]);
+  });
+});
+
+describe("review fixes, through the whole app", () => {
+  beforeEach(() => {
+    server.use(
+      http.get(`${API}/voices/`, () =>
+        HttpResponse.json({
+          voices: [
+            { id: "fr_FR-siwis-medium", model: "piper", name: "Siwis", language: "fr" },
+            { id: "FR", model: "openvoice", name: "French", language: "fr" },
+            { id: "v2/en_speaker_0", model: "bark", name: "English Male 1", language: "en" },
+          ],
+        }),
+      ),
+    );
+  });
+
+  it("keeps a picked voice that a box now hides in the pool, so it can be unticked", async () => {
+    render(<App />);
+    await screen.findByText(/3 voices loaded/);
+    fireEvent.click(screen.getByText("Random Assignment"));
+    fireEvent.click(within(screen.getByRole("group", { name: "Voice pool" })).getByLabelText(/French \(openvoice\)/));
+    expect(screen.getByText("(1 selected)")).not.toBeNull();
+
+    fireEvent.click(screen.getByLabelText("Responds to speed control"));
+
+    const hidden = screen.getByRole("list", { name: "Selected, but hidden by the language or Sort voices" });
+    const box = within(hidden).getByRole("checkbox");
+    expect(box).toHaveProperty("checked", true);
+    fireEvent.click(box);
+    expect(screen.getByText("(0 selected)")).not.toBeNull();
+    expect(screen.queryByRole("list", { name: "Selected, but hidden by the language or Sort voices" })).toBeNull();
+  });
+
+  it("restores an old session that used a now-hidden voice without blocking anything", async () => {
+    const bark = "bark:v2/fr_speaker_0";
+    saveQueue(
+      [
+        savedRow({ id: "done", status: "completed", speaker: bark, jobId: "job-1", downloadUrl: FILE, generatedWith: { speaker: bark, speed: 1 } }),
+        savedRow({ id: "next", text: "une rivière", filename: "une_riviere" }),
+      ],
+      { settings: { config: { mode: "roundRobin", selectedVoices: [bark, PIPER] }, globalSpeed: 1, languageChoice: null, voiceList: DEFAULT_VOICE_LIST } },
+    );
+    render(<App />);
+    await screen.findByText(/3 voices loaded/);
+
+    const order = screen.getByText("Speaking order").parentElement as HTMLElement;
+    expect(within(order).getAllByRole("listitem").map((entry) => entry.textContent)).toEqual([expect.stringContaining("Siwis")]);
+    expect(queueRow(1).getByText("French Speaker 1")).not.toBeNull();
+    expect(screen.getByText("(1 selected)")).not.toBeNull();
+  });
+
+  it("counts each language by what the Sort voices boxes let through", async () => {
+    render(<App />);
+    await screen.findByText(/3 voices loaded/);
+    const options = [...screen.getByLabelText("Voice language").querySelectorAll("option")].map((option) => option.textContent);
+    expect(options).toEqual(["All languages (2 of 3)", "English (0 of 1)", "French (2)"]);
+    fireEvent.click(screen.getByLabelText("Tested voices only"));
+    expect([...screen.getByLabelText("Voice language").querySelectorAll("option")].map((option) => option.textContent)).toEqual([
+      "All languages (3)",
+      "English (1)",
+      "French (2)",
     ]);
   });
 });
