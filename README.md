@@ -17,15 +17,16 @@ npm run dev               # http://localhost:5173, then enter your key in the pa
 Or, for local development only, put the key in `.env` (`cp .env.example .env`, then set
 `VITE_TTS_API_KEY`) so you don't have to enter it.
 
-| Script                     | What it does                                                   |
-| -------------------------- | -------------------------------------------------------------- |
-| `npm run dev`              | Dev server with the TTS.ai proxy                               |
-| `npm run build`            | Strict type check + production build to `dist`                 |
-| `npm run preview`          | Serve the production build (proxy included)                    |
-| `npm run typecheck`        | Type check only                                                |
-| `npm test`                 | Run the tests once (no real API calls)                         |
-| `npm run test:watch`       | Re-run the tests on every file change                          |
-| `npm run benchmark:voices` | Time every French voice on TTS.ai (spends credits, asks first) |
+| Script                     | What it does                                                          |
+| -------------------------- | --------------------------------------------------------------------- |
+| `npm run dev`              | Dev server with the TTS.ai proxy                                      |
+| `npm run build`            | Strict type check + production build to `dist`                        |
+| `npm run preview`          | Serve the production build (proxy included)                           |
+| `npm run typecheck`        | Type check only                                                       |
+| `npm test`                 | Run the tests once (no real API calls)                                |
+| `npm run test:watch`       | Re-run the tests on every file change                                 |
+| `npm run benchmark:voices` | Time every French voice on TTS.ai (spends credits, asks first)        |
+| `npm run icons`            | Redraw the PNG app icons from the same shapes as `public/favicon.svg` |
 
 ## Environment
 
@@ -195,15 +196,6 @@ key ships with the site. A key a visitor ticks **Remember** for is kept in `loca
 
 ## TODO
 
-- [ ] **Clear Queue keeps the Bulk Import text**: clearing the queue must not empty the Bulk Import
-  box. In the current code `handleClear` only empties the queue, and a test on 2026-10-26 kept the
-  text; the box does empty on **Add To Queue** (by design, so words aren't added twice) and on
-  **Reset**. Reproduce the report first, then add a regression test in `App.test.tsx`.
-- [ ] **Tab icon**: use the header's icon (blue rounded square with white sound-wave bars) as the
-  favicon. Add `public/favicon.svg` with the same shapes (`rounded-lg bg-blue-600`, path
-  `M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4`) and `<link rel="icon" type="image/svg+xml"
-  href="./favicon.svg">` in `index.html` (a relative path, for GitHub Pages). Consider a PNG
-  fallback for browsers without SVG favicon support.
 
 ## License
 

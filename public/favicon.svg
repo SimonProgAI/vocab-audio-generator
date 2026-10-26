@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48">
+  <!-- The header icon (App.tsx): a rounded-lg bg-blue-600 square with the sound-wave bars at half its size. -->
+  <rect width="48" height="48" rx="9.6" fill="#155dfc"/>
+  <path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" transform="translate(12 12)" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>
+</svg>

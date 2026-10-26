@@ -11,7 +11,8 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest",
-    "benchmark:voices": "node scripts/benchmark-voices.ts"
+    "benchmark:voices": "node scripts/benchmark-voices.ts",
+    "icons": "node scripts/make-icons.ts"
   },
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
