@@ -3,7 +3,7 @@ import type { PlaybackState } from "../hooks/useAudioPlayer";
 import { SAMPLE_TEXT } from "../services/voiceSample";
 import type { QueueItem, QueueItemEdit, Voice } from "../types/queue";
 import { SPEED_OPTIONS, effectiveSpeed, formatSpeed } from "../utils/speed";
-import type { VoiceOrder } from "../utils/voices";
+import type { VoiceListOptions } from "../utils/voices";
 import { Button } from "./Button";
 import { FIELD_CLASS } from "./fieldStyles";
 import { Spinner } from "./Spinner";
@@ -19,7 +19,7 @@ interface QueueRowProps {
   assignedSpeaker: string;
   voices: Voice[];
   voicesByKey: ReadonlyMap<string, Voice>;
-  voiceOrder: VoiceOrder;
+  voiceList: VoiceListOptions;
   outdated: boolean;
   locked: boolean;
   onEdit: (id: string, changes: QueueItemEdit) => void;
@@ -44,7 +44,7 @@ function QueueRowComponent({
   assignedSpeaker,
   voices,
   voicesByKey,
-  voiceOrder,
+  voiceList,
   outdated,
   locked,
   onEdit,
@@ -178,7 +178,7 @@ function QueueRowComponent({
           <VoiceSelect
             voices={voices}
             voicesByKey={voicesByKey}
-            order={voiceOrder}
+            voiceList={voiceList}
             value={item.speaker}
             onChange={(speaker) => onEdit(item.id, { speaker })}
             placeholder="Choose…"

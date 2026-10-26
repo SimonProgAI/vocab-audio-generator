@@ -16,9 +16,9 @@ import {
   formatVoiceLabel,
   voiceName,
   type LanguageSummary,
-  isVoiceOrder,
-  VOICE_ORDERS,
-  type VoiceOrder,
+  emptyListMessage,
+  VOICE_LIST_CHECKBOXES,
+  type VoiceListOptions,
 } from "../utils/voices";
 import { Button } from "./Button";
 import { FIELD_CLASS } from "./fieldStyles";
@@ -37,8 +37,8 @@ interface SpeakerSettingsProps {
   languages: LanguageSummary[];
   language: string;
   onLanguageChange: (language: string) => void;
-  voiceOrder: VoiceOrder;
-  onVoiceOrderChange: (order: VoiceOrder) => void;
+  voiceList: VoiceListOptions;
+  onVoiceListChange: (options: VoiceListOptions) => void;
   config: SpeakerConfig;
   onConfigChange: (config: SpeakerConfig) => void;
   globalSpeed: number;
@@ -70,8 +70,8 @@ function SpeakerSettingsComponent({
   languages,
   language,
   onLanguageChange,
-  voiceOrder,
-  onVoiceOrderChange,
+  voiceList,
+  onVoiceListChange,
   config,
   onConfigChange,
   globalSpeed,
@@ -81,7 +81,6 @@ function SpeakerSettingsComponent({
   const modeName = useId();
   const singleSpeakerId = useId();
   const languageId = useId();
-  const orderId = useId();
   const speedId = useId();
   const pickersDisabled = disabled || voiceStatus !== "ready";
 
@@ -99,7 +98,7 @@ function SpeakerSettingsComponent({
     update({
       selectedVoices: [
         ...config.selectedVoices,
-        ...arrangeVoices(voices, voiceOrder)
+        ...arrangeVoices(voices, voiceList)
           .flatMap((group) => group.voices.map((voice) => voice.key))
           .filter((key) => !config.selectedVoices.includes(key)),
       ],
@@ -111,7 +110,7 @@ function SpeakerSettingsComponent({
   const checklist = (
     <VoiceChecklist
       voices={voices}
-      order={voiceOrder}
+      voiceList={voiceList}
       selected={config.selectedVoices}
       onToggle={toggleVoice}
       onSelectAll={selectAllShown}
@@ -168,7 +167,7 @@ function SpeakerSettingsComponent({
                   id={singleSpeakerId}
                   voices={voices}
                   voicesByKey={voicesByKey}
-                  order={voiceOrder}
+                  voiceList={voiceList}
                   value={config.singleSpeaker}
                   onChange={(id) => update({ singleSpeaker: id })}
                   placeholder="Choose a speaker…"
@@ -239,38 +238,32 @@ function SpeakerSettingsComponent({
             )}
           </div>
 
-          <div>
-            <label htmlFor={orderId} className="mb-1 block text-sm font-medium text-slate-700">
-              Sort voices
-            </label>
-            <select
-              id={orderId}
-              value={voiceOrder}
-              onChange={(event) => {
-                if (isVoiceOrder(event.target.value)) onVoiceOrderChange(event.target.value);
-              }}
-              disabled={pickersDisabled}
-              className={FIELD_CLASS}
-            >
-              {VOICE_ORDERS.map((order) => (
-                <option key={order.value} value={order.value}>
-                  {order.label}
-                </option>
+          <fieldset>
+            <legend className="mb-1 block text-sm font-medium text-slate-700">Sort voices</legend>
+            <div className="grid gap-1">
+              {VOICE_LIST_CHECKBOXES.map(({ option, label }) => (
+                <label key={option} className="flex items-center gap-2 text-sm text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={voiceList[option]}
+                    onChange={(event) => onVoiceListChange({ ...voiceList, [option]: event.target.checked })}
+                    disabled={pickersDisabled}
+                    className="h-4 w-4 accent-blue-600"
+                  />
+                  {label}
+                </label>
               ))}
-            </select>
-            {voiceOrder === "tier" && (
-              <p className="mt-2 text-xs text-slate-500">
-                Prices come from TTS.ai's docs and a benchmark of the French voices. Other models are
-                listed under “Price not known yet”.
-              </p>
-            )}
-            {voiceOrder === "followsSpeed" && (
-              <p className="mt-2 text-xs text-slate-500">
-                Only voices a check found to follow the speed setting are listed, cheapest first. For
-                French, that's kokoro, melotts and piper; other languages haven't been checked yet.
-              </p>
-            )}
-          </div>
+            </div>
+            <ul className="mt-2 space-y-1 text-xs text-slate-500">
+              {voiceList.testedOnly && (
+                <li>Tested: the French voices checked for speaking French and for speed. Other languages aren't tested.</li>
+              )}
+              {voiceList.byPrice && (
+                <li>Prices come from TTS.ai's docs and a benchmark of the French voices; others show as “Price not known yet”.</li>
+              )}
+              {voiceList.followsSpeed && <li>Responds to speed: kokoro, melotts and piper, so far.</li>}
+            </ul>
+          </fieldset>
 
           <div>
             <div className="flex items-center justify-between">
@@ -319,7 +312,7 @@ export const SpeakerSettings = memo(SpeakerSettingsComponent);
 
 interface VoiceChecklistProps {
   voices: Voice[];
-  order: VoiceOrder;
+  voiceList: VoiceListOptions;
   selected: string[];
   onToggle: (voiceKey: string) => void;
   onSelectAll: () => void;
@@ -327,9 +320,9 @@ interface VoiceChecklistProps {
   disabled: boolean;
 }
 
-function VoiceChecklist({ voices, order, selected, onToggle, onSelectAll, onClear, disabled }: VoiceChecklistProps) {
+function VoiceChecklist({ voices, voiceList, selected, onToggle, onSelectAll, onClear, disabled }: VoiceChecklistProps) {
   const selectedKeys = new Set(selected);
-  const groups = arrangeVoices(voices, order);
+  const groups = arrangeVoices(voices, voiceList);
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
@@ -347,10 +340,14 @@ function VoiceChecklist({ voices, order, selected, onToggle, onSelectAll, onClea
       </div>
       {groups.length === 0 ? (
         <p className="mt-2 rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-          {voices.length === 0 ? "No voices to show yet." : "None of these voices is known to follow the speed setting."}
+          {voices.length === 0 ? "No voices to show yet." : emptyListMessage(voiceList)}
         </p>
       ) : (
-        <div className="mt-2 max-h-60 space-y-2 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1.5">
+        <div
+          role="group"
+          aria-label="Voice pool"
+          className="mt-2 max-h-60 space-y-2 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1.5"
+        >
           {groups.map((group) => (
             <div key={group.key}>
               {group.label && <p className="px-2 pt-1 text-xs font-semibold text-slate-500">{group.label}</p>}

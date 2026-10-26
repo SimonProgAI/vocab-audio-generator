@@ -1,7 +1,7 @@
 import type { AssignmentMode, GenerationSnapshot, QueueItem, QueueStatus, SpeakerConfig } from "../types/queue";
 import type { CreditUsage } from "../utils/credits";
 import { MAX_SPEED, MIN_SPEED } from "../utils/speed";
-import { isVoiceOrder, type VoiceOrder } from "../utils/voices";
+import { DEFAULT_VOICE_LIST, type VoiceListOptions } from "../utils/voices";
 
 /**
  * The queue, the Bulk Import text and the settings are kept in sessionStorage, so a refresh or an
@@ -15,7 +15,7 @@ export interface SessionSettings {
   globalSpeed: number;
   /** null means "use the default language". */
   languageChoice: string | null;
-  voiceOrder: VoiceOrder;
+  voiceList: VoiceListOptions;
 }
 
 export interface SessionSnapshot {
@@ -161,6 +161,26 @@ function parseCredits(value: unknown): CreditUsage | undefined {
   return { used: value.used, reportedRemaining: isCount(value.reportedRemaining) ? value.reportedRemaining : undefined };
 }
 
+/** Before the checkboxes, a "Sort voices" dropdown saved one of these. */
+const OLD_VOICE_ORDERS: Readonly<Record<string, Partial<VoiceListOptions>>> = {
+  name: {},
+  tier: { byPrice: true },
+  followsSpeed: { byPrice: true, followsSpeed: true },
+};
+
+function parseVoiceList(value: unknown, oldOrder: unknown): VoiceListOptions | undefined {
+  if (isRecord(value)) {
+    const options = { ...DEFAULT_VOICE_LIST };
+    for (const key of Object.keys(DEFAULT_VOICE_LIST) as Array<keyof VoiceListOptions>) {
+      const saved = value[key];
+      if (typeof saved === "boolean") options[key] = saved;
+    }
+    return options;
+  }
+  const old = typeof oldOrder === "string" ? OLD_VOICE_ORDERS[oldOrder] : undefined;
+  return old ? { ...DEFAULT_VOICE_LIST, testedOnly: false, ...old } : undefined;
+}
+
 function parseSettings(value: unknown): Partial<SessionSettings> {
   if (!isRecord(value)) return {};
   const settings: Partial<SessionSettings> = {};
@@ -170,7 +190,8 @@ function parseSettings(value: unknown): Partial<SessionSettings> {
   if (value.languageChoice === null || typeof value.languageChoice === "string") {
     settings.languageChoice = value.languageChoice;
   }
-  if (isVoiceOrder(value.voiceOrder)) settings.voiceOrder = value.voiceOrder;
+  const voiceList = parseVoiceList(value.voiceList, value.voiceOrder);
+  if (voiceList) settings.voiceList = voiceList;
   return settings;
 }
 

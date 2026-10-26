@@ -67,7 +67,7 @@ describe("getVoices", () => {
     expect(seen).toEqual(["Bearer sk-visitor-1234", "Bearer test-key"]);
   });
 
-  it("keys voices by model:id, drops duplicates and bad entries, and sorts them", async () => {
+  it("keys voices by model:id and drops duplicates and bad entries, keeping TTS.ai's order", async () => {
     server.use(
       http.get(`${API}/voices/`, () =>
         HttpResponse.json({
@@ -83,8 +83,8 @@ describe("getVoices", () => {
       ),
     );
     expect(await getVoices()).toEqual([
-      { key: "melotts:FR", id: "FR", name: "French", language: "fr", model: "melotts", gender: "female" },
       { key: "openvoice:FR", id: "FR", name: "French", language: "fr", model: "openvoice" },
+      { key: "melotts:FR", id: "FR", name: "French", language: "fr", model: "melotts", gender: "female" },
       { key: "piper:siwis", id: "siwis", name: "siwis", language: "fr-FR", model: "piper" },
     ]);
   });

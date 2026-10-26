@@ -36,7 +36,7 @@ const snapshot: SessionSnapshot = {
     config: { mode: "roundRobin", selectedVoices: ["piper:siwis", "melotts:FR"] },
     globalSpeed: 1.2,
     languageChoice: "all",
-    voiceOrder: "tier",
+    voiceList: { testedOnly: true, byPrice: true, followsSpeed: false, byName: true },
   },
   credits: { used: 319, reportedRemaining: 2_415_000 },
 };
@@ -190,8 +190,19 @@ describe("parseSession", () => {
     expect(parseSession({ items: [] })?.settings).toEqual({});
   });
 
-  it("restores the Follows speed order", () => {
-    expect(parseSession({ items: [], settings: { voiceOrder: "followsSpeed" } })?.settings).toEqual({ voiceOrder: "followsSpeed" });
+  it("restores the Sort voices boxes, using the default for any missing or broken one", () => {
+    expect(parseSession({ items: [], settings: { voiceList: { byPrice: true, testedOnly: "yes" } } })?.settings).toEqual({
+      voiceList: { testedOnly: true, byPrice: true, followsSpeed: false, byName: true },
+    });
+    expect(parseSession({ items: [], settings: { voiceList: "all" } })?.settings).toEqual({});
+  });
+
+  it.each([
+    ["name", { testedOnly: false, byPrice: false, followsSpeed: false, byName: true }],
+    ["tier", { testedOnly: false, byPrice: true, followsSpeed: false, byName: true }],
+    ["followsSpeed", { testedOnly: false, byPrice: true, followsSpeed: true, byName: true }],
+  ])("turns the old Sort voices choice %j into the matching boxes", (voiceOrder, voiceList) => {
+    expect(parseSession({ items: [], settings: { voiceOrder } })?.settings).toEqual({ voiceList });
   });
 
   it("keeps the valid settings when others are broken", () => {

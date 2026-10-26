@@ -2,16 +2,25 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SpeakerConfig, Voice } from "../types/queue";
-import type { VoiceOrder } from "../utils/voices";
+import type { VoiceListOptions } from "../utils/voices";
 import { SpeakerSettings } from "./SpeakerSettings";
 
+// In TTS.ai's order. All but Xavier were tested; melotts and piper respond to speed.
 const voices: Voice[] = [
   { key: "openvoice:FR", id: "FR", name: "French", language: "fr", model: "openvoice" },
-  { key: "piper:siwis", id: "siwis", name: "Siwis", language: "fr", model: "piper" },
+  { key: "piper:fr_FR-siwis-medium", id: "fr_FR-siwis-medium", name: "Siwis", language: "fr", model: "piper" },
   { key: "melotts:FR", id: "FR", name: "Mélo", language: "fr", model: "melotts" },
+  { key: "xtts:fr_test", id: "fr_test", name: "Xavier", language: "fr", model: "xtts" },
 ];
 
-function renderWith(shown: Voice[], voiceOrder: VoiceOrder, config: SpeakerConfig) {
+const OFF: VoiceListOptions = { testedOnly: false, byPrice: false, followsSpeed: false, byName: false };
+
+function renderSettings(
+  voiceList: Partial<VoiceListOptions>,
+  config: SpeakerConfig = { mode: "random", selectedVoices: [] },
+  { shown = voices, disabled = false }: { shown?: Voice[]; disabled?: boolean } = {},
+) {
+  const onVoiceListChange = vi.fn();
   const onConfigChange = vi.fn();
   render(
     <SpeakerSettings
@@ -22,121 +31,121 @@ function renderWith(shown: Voice[], voiceOrder: VoiceOrder, config: SpeakerConfi
       languages={[{ code: "fr", label: "French", count: shown.length }]}
       language="fr"
       onLanguageChange={vi.fn()}
-      voiceOrder={voiceOrder}
-      onVoiceOrderChange={vi.fn()}
+      voiceList={{ ...OFF, ...voiceList }}
+      onVoiceListChange={onVoiceListChange}
       config={config}
       onConfigChange={onConfigChange}
       globalSpeed={1}
       onGlobalSpeedChange={vi.fn()}
-      disabled={false}
+      disabled={disabled}
     />,
   );
-  return onConfigChange;
+  return { onVoiceListChange, onConfigChange };
 }
 
-function renderSettings(voiceOrder: VoiceOrder, config: SpeakerConfig = { mode: "random", selectedVoices: [] }) {
-  const onVoiceOrderChange = vi.fn();
-  const onConfigChange = vi.fn();
-  render(
-    <SpeakerSettings
-      voiceStatus="ready"
-      onRetryVoices={vi.fn()}
-      voices={voices}
-      voicesByKey={new Map(voices.map((voice) => [voice.key, voice]))}
-      languages={[{ code: "fr", label: "French", count: voices.length }]}
-      language="fr"
-      onLanguageChange={vi.fn()}
-      voiceOrder={voiceOrder}
-      onVoiceOrderChange={onVoiceOrderChange}
-      config={config}
-      onConfigChange={onConfigChange}
-      globalSpeed={1}
-      onGlobalSpeedChange={vi.fn()}
-      disabled={false}
-    />,
-  );
-  return { onVoiceOrderChange, onConfigChange };
+/** The names in the voice pool, in the order shown. */
+function pool(): string[] {
+  return within(screen.getByRole("group", { name: "Voice pool" }))
+    .getAllByRole("checkbox")
+    .map((box) => box.closest("label")?.textContent ?? "");
 }
 
 afterEach(cleanup);
 
-describe("SpeakerSettings voice sorting", () => {
-  it("reports the chosen order", () => {
-    const { onVoiceOrderChange } = renderSettings("name");
-    fireEvent.change(screen.getByLabelText("Sort voices"), { target: { value: "tier" } });
-    expect(onVoiceOrderChange).toHaveBeenCalledWith("tier");
+describe("Sort voices checkboxes", () => {
+  it("shows the four boxes, ticked as given", () => {
+    renderSettings({ testedOnly: true, byName: true });
+    const sort = within(screen.getByRole("group", { name: "Sort voices" }));
+    expect(sort.getAllByRole("checkbox").map((box) => [box.closest("label")?.textContent, (box as HTMLInputElement).checked])).toEqual([
+      ["Tested voices only", true],
+      ["Price, low to high", false],
+      ["Responds to speed control", false],
+      ["By name (A–Z)", true],
+    ]);
   });
 
-  it("groups the voice pool by tier when sorting by price", () => {
-    renderSettings("tier");
-    const free = screen.getByRole("list", { name: "Free tier · 1 credit per character" });
-    const premium = screen.getByRole("list", { name: "Premium · 4 credits per character" });
-    expect(within(free).getAllByRole("checkbox").map((box) => box.closest("label")?.textContent)).toEqual([
-      "Siwis (piper)",
-      "Mélo (melotts)",
-    ]);
-    expect(within(premium).getByRole("checkbox").closest("label")?.textContent).toBe("French (openvoice) · ignores speed");
+  it("reports a change to one box, keeping the others", () => {
+    const { onVoiceListChange } = renderSettings({ testedOnly: true, byName: true });
+    fireEvent.click(screen.getByLabelText("Price, low to high"));
+    expect(onVoiceListChange).toHaveBeenCalledWith({ testedOnly: true, byPrice: true, followsSpeed: false, byName: true });
+  });
+
+  it("can't be changed while audio is generating", () => {
+    renderSettings({ byName: true }, undefined, { disabled: true });
+    expect(screen.getByLabelText("By name (A–Z)")).toHaveProperty("disabled", true);
+  });
+});
+
+describe("the voice pool under Sort voices", () => {
+  it("keeps TTS.ai's order with every box off", () => {
+    renderSettings({});
+    expect(pool()).toEqual(["French (openvoice) · ignores speed", "Siwis (piper)", "Mélo (melotts)", "Xavier (xtts)"]);
+  });
+
+  it("lists A–Z by name", () => {
+    renderSettings({ byName: true });
+    expect(pool()).toEqual(["French (openvoice) · ignores speed", "Mélo (melotts)", "Siwis (piper)", "Xavier (xtts)"]);
+  });
+
+  it("groups by price, cheapest first, A–Z inside each group", () => {
+    renderSettings({ byPrice: true, byName: true });
+    const group = (name: string) =>
+      within(screen.getByRole("list", { name })).getAllByRole("checkbox").map((box) => box.closest("label")?.textContent);
+    expect(group("Free tier · 1 credit per character")).toEqual(["Mélo (melotts)", "Siwis (piper)"]);
+    expect(group("Premium · 4 credits per character")).toEqual(["French (openvoice) · ignores speed"]);
+    expect(group("Price not known yet")).toEqual(["Xavier (xtts)"]);
     expect(screen.getByText(/Prices come from TTS.ai's docs/)).not.toBeNull();
   });
 
-  it("shows one flat voice pool when sorting by name", () => {
-    renderSettings("name");
-    expect(screen.queryByText("Free tier · 1 credit per character")).toBeNull();
-    expect(screen.getAllByRole("checkbox")).toHaveLength(3);
+  it("hides voices that weren't tested", () => {
+    renderSettings({ testedOnly: true, byName: true });
+    expect(pool()).toEqual(["French (openvoice) · ignores speed", "Mélo (melotts)", "Siwis (piper)"]);
+    expect(screen.getByText(/Tested: the French voices checked/)).not.toBeNull();
+  });
+
+  it("keeps only voices that respond to speed control", () => {
+    renderSettings({ followsSpeed: true, byName: true });
+    expect(pool()).toEqual(["Mélo (melotts)", "Siwis (piper)"]);
+    expect(screen.getByText(/Responds to speed: kokoro, melotts and piper/)).not.toBeNull();
+  });
+
+  it("combines all four", () => {
+    renderSettings({ testedOnly: true, byPrice: true, followsSpeed: true, byName: true });
+    expect(screen.getByRole("list", { name: "Free tier · 1 credit per character" })).not.toBeNull();
+    expect(pool()).toEqual(["Mélo (melotts)", "Siwis (piper)"]);
+  });
+
+  it("says why when the boxes leave nothing", () => {
+    renderSettings({ testedOnly: true }, undefined, { shown: voices.slice(3) });
+    expect(screen.getByText("No tested voices here. Only French voices have been tested so far.")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Select all shown" })).toHaveProperty("disabled", true);
   });
 
   it("selects all shown voices in the order the list shows them", () => {
-    const { onConfigChange } = renderSettings("tier", { mode: "roundRobin", selectedVoices: [] });
+    const { onConfigChange } = renderSettings({ byPrice: true, byName: true }, { mode: "roundRobin", selectedVoices: [] });
     fireEvent.click(screen.getByRole("button", { name: "Select all shown" }));
     expect(onConfigChange).toHaveBeenCalledWith({
       mode: "roundRobin",
-      selectedVoices: ["piper:siwis", "melotts:FR", "openvoice:FR"],
+      selectedVoices: ["melotts:FR", "piper:fr_FR-siwis-medium", "openvoice:FR", "xtts:fr_test"],
     });
   });
 
-  it("keeps already selected voices first when selecting all", () => {
-    const { onConfigChange } = renderSettings("tier", { mode: "roundRobin", selectedVoices: ["openvoice:FR"] });
+  it("selects only what the boxes let through, keeping earlier picks first", () => {
+    const { onConfigChange } = renderSettings({ followsSpeed: true, byName: true }, { mode: "roundRobin", selectedVoices: ["openvoice:FR"] });
     fireEvent.click(screen.getByRole("button", { name: "Select all shown" }));
     expect(onConfigChange).toHaveBeenCalledWith({
       mode: "roundRobin",
-      selectedVoices: ["openvoice:FR", "piper:siwis", "melotts:FR"],
+      selectedVoices: ["openvoice:FR", "melotts:FR", "piper:fr_FR-siwis-medium"],
     });
   });
 
-  it("groups the single-speaker picker too", () => {
-    renderSettings("tier", { mode: "single", selectedVoices: [] });
+  it("applies to the single-speaker picker too", () => {
+    renderSettings({ byPrice: true, byName: true }, { mode: "single", selectedVoices: [] });
     const picker = screen.getByLabelText("Speaker for every file");
     expect([...picker.querySelectorAll("optgroup")].map((group) => group.label)).toEqual([
       "Free tier · 1 credit per character",
       "Premium · 4 credits per character",
+      "Price not known yet",
     ]);
-  });
-});
-
-describe("SpeakerSettings Follows speed", () => {
-  it("offers the option and reports it", () => {
-    const { onVoiceOrderChange } = renderSettings("name");
-    const options = [...screen.getByLabelText("Sort voices").querySelectorAll("option")].map((option) => option.textContent);
-    expect(options).toEqual(["By name", "By price, free tier first", "Follows speed, by price"]);
-    fireEvent.change(screen.getByLabelText("Sort voices"), { target: { value: "followsSpeed" } });
-    expect(onVoiceOrderChange).toHaveBeenCalledWith("followsSpeed");
-  });
-
-  it("lists only voices known to follow speed, and explains why", () => {
-    renderSettings("followsSpeed");
-    expect(screen.getAllByRole("checkbox").map((box) => box.closest("label")?.textContent)).toEqual(["Mélo (melotts)"]);
-    expect(screen.getByText(/Only voices a check found to follow the speed setting/)).not.toBeNull();
-  });
-
-  it("selects all of those, and only those", () => {
-    const onConfigChange = renderWith(voices, "followsSpeed", { mode: "roundRobin", selectedVoices: [] });
-    fireEvent.click(screen.getByRole("button", { name: "Select all shown" }));
-    expect(onConfigChange).toHaveBeenCalledWith({ mode: "roundRobin", selectedVoices: ["melotts:FR"] });
-  });
-
-  it("says so when none of the shown voices follows speed", () => {
-    renderWith(voices.slice(0, 1), "followsSpeed", { mode: "random", selectedVoices: [] });
-    expect(screen.getByText("None of these voices is known to follow the speed setting.")).not.toBeNull();
-    expect(screen.getByRole("button", { name: "Select all shown" })).toHaveProperty("disabled", true);
   });
 });

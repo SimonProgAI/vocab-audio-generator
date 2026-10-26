@@ -29,7 +29,7 @@ import type { QueueItem, SpeakerConfig, Voice } from "./types/queue";
 import { NO_CREDITS_USED, recordCredits, type CreditUsage } from "./utils/credits";
 import { pluralize } from "./utils/format";
 import { DEFAULT_SPEED, effectiveSpeed } from "./utils/speed";
-import { defaultLanguage, matchesLanguage, summarizeLanguages, type VoiceOrder } from "./utils/voices";
+import { DEFAULT_VOICE_LIST, defaultLanguage, matchesLanguage, summarizeLanguages, type VoiceListOptions } from "./utils/voices";
 
 function summarizeRun({ completed, failed, stoppedByUser, fatalError }: GenerationSummary): NoticeContent {
   if (fatalError) {
@@ -110,7 +110,7 @@ export default function App() {
   const [config, setConfig] = useState<SpeakerConfig>(saved?.settings.config ?? DEFAULT_CONFIG);
   const [globalSpeed, setGlobalSpeed] = useState(saved?.settings.globalSpeed ?? DEFAULT_SPEED);
   const [languageChoice, setLanguageChoice] = useState<string | null>(saved?.settings.languageChoice ?? null);
-  const [voiceOrder, setVoiceOrder] = useState<VoiceOrder>(saved?.settings.voiceOrder ?? "name");
+  const [voiceList, setVoiceList] = useState<VoiceListOptions>(saved?.settings.voiceList ?? DEFAULT_VOICE_LIST);
   const [draft, setDraft] = useState(saved?.draft ?? "");
   const [notice, setNotice] = useState<NoticeContent | null>(() => restoredNotice(saved));
   // Settings are locked while generating, so the saved speed is the one these jobs were sent with.
@@ -127,8 +127,8 @@ export default function App() {
   const [zipProgress, setZipProgress] = useState<ZipProgress | null>(null);
 
   const snapshot = useMemo<SessionSnapshot>(
-    () => ({ items, draft, settings: { config, globalSpeed, languageChoice, voiceOrder }, credits }),
-    [items, draft, config, globalSpeed, languageChoice, voiceOrder, credits],
+    () => ({ items, draft, settings: { config, globalSpeed, languageChoice, voiceList }, credits }),
+    [items, draft, config, globalSpeed, languageChoice, voiceList, credits],
   );
   useSessionSaver(snapshot);
 
@@ -296,7 +296,7 @@ export default function App() {
     setConfig(DEFAULT_CONFIG);
     setGlobalSpeed(DEFAULT_SPEED);
     setLanguageChoice(null);
-    setVoiceOrder("name");
+    setVoiceList(DEFAULT_VOICE_LIST);
     setCredits(NO_CREDITS_USED);
     clearVoiceSamples();
     setNotice(null);
@@ -348,8 +348,8 @@ export default function App() {
           languages={languages}
           language={language}
           onLanguageChange={setLanguageChoice}
-          voiceOrder={voiceOrder}
-          onVoiceOrderChange={setVoiceOrder}
+          voiceList={voiceList}
+          onVoiceListChange={setVoiceList}
           config={config}
           onConfigChange={setConfig}
           globalSpeed={globalSpeed}
@@ -362,7 +362,7 @@ export default function App() {
           config={config}
           voices={visibleVoices}
           voicesByKey={voiceLibrary.voicesByKey}
-          voiceOrder={voiceOrder}
+          voiceList={voiceList}
           globalSpeed={globalSpeed}
           outdatedIds={outdatedIds}
           locked={generation.isGenerating}

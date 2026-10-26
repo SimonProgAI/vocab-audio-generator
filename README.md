@@ -93,8 +93,13 @@ src/
   always failed; bark-small was dropped later because its clips stop abruptly mid-sound. Voices
   whose audio didn't get slower at 0.5× and faster at 2× are labeled "ignores speed"
   (`IGNORES_SPEED`); of the French voices, only kokoro, melotts and piper follow it
-  (`FOLLOWS_SPEED`). **Sort voices → Follows speed, by price** lists just those, cheapest first;
-  voices nobody has checked aren't assumed to follow it.
+  (`FOLLOWS_SPEED`). Voices nobody has checked aren't assumed to follow it.
+- **Sort voices**: four checkboxes apply to every speaker list (`arrangeVoices` in
+  `utils/voices.ts`). **Tested voices only** hides voices that weren't checked (every language but
+  French). **Price, low to high** groups by price tier. **Responds to speed control** keeps only
+  kokoro, melotts and piper. **By name (A–Z)** sorts by name, inside each price group when both
+  are on; with it off, voices keep TTS.ai's order. A first visit, and **Reset**, start with
+  Tested voices only and By name. A list the boxes leave empty says why.
 - **Real MP3s**: piper, vits and bark-small return WAV even though the app asks for MP3 (TTS.ai
   still labels it `audio/mpeg`). The first time such a file is played, downloaded or zipped, the
   browser converts it to 64 kbps MP3 (`services/wavToMp3.ts`); loud float audio is turned down to
@@ -102,7 +107,7 @@ src/
   loaded only when a WAV turns up.
 - **Voice tiers**: the voice list has no prices, so `utils/voices.ts` maps each model to TTS.ai's
   price tier (free = 1 credit per character, standard = 2, premium = 4), measured with
-  `npm run benchmark:voices`. **Sort voices → By price** groups every speaker list by tier;
+  `npm run benchmark:voices`. **Price, low to high** groups every speaker list by tier;
   unmapped models appear under "Price not known yet".
 - **Credits**: the toolbar adds up `credits_used` from every job this tab submitted, including
   voice samples (audio TTS.ai already had costs 0). It also shows the latest `credits_remaining`,

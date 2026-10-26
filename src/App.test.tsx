@@ -9,7 +9,7 @@ import { SESSION_KEY, saveSession, type SessionSnapshot } from "./services/sessi
 import { clearVoiceSamples } from "./services/voiceSample";
 import { server } from "./test/server";
 import type { QueueItem } from "./types/queue";
-import { arrangeVoices } from "./utils/voices";
+import { DEFAULT_VOICE_LIST, arrangeVoices } from "./utils/voices";
 
 // Wrapped, not replaced: each is called whenever the queue or the speaker lists render.
 vi.mock("./services/assignment", async (importOriginal) => {
@@ -113,7 +113,7 @@ describe("session persistence", () => {
     const view = await openApp();
     addWords("un champ", "une rivière");
     fireEvent.change(screen.getByLabelText("Global speed"), { target: { value: "1.5" } });
-    fireEvent.change(screen.getByLabelText("Sort voices"), { target: { value: "tier" } });
+    fireEvent.click(screen.getByLabelText("Price, low to high"));
     fireEvent.change(screen.getByLabelText("Speaker for every file"), { target: { value: PIPER } });
 
     await reload(view);
@@ -121,7 +121,7 @@ describe("session persistence", () => {
     expect(rowText(1)).toHaveProperty("value", "un champ");
     expect(rowText(2)).toHaveProperty("value", "une rivière");
     expect(screen.getByLabelText("Global speed")).toHaveProperty("value", "1.5");
-    expect(screen.getByLabelText("Sort voices")).toHaveProperty("value", "tier");
+    expect(screen.getByLabelText("Price, low to high")).toHaveProperty("checked", true);
     expect(screen.getByLabelText("Speaker for every file")).toHaveProperty("value", PIPER);
     expect(screen.getByText("Queue restored")).not.toBeNull();
   });
@@ -199,7 +199,7 @@ describe("session persistence", () => {
     saveSession({
       items: [savedRow({ status: "processing", jobId: "job-1", speaker: PIPER })],
       draft: "",
-      settings: { config: { mode: "single", singleSpeaker: PIPER, selectedVoices: [] }, globalSpeed: 1.5, languageChoice: null, voiceOrder: "name" },
+      settings: { config: { mode: "single", singleSpeaker: PIPER, selectedVoices: [] }, globalSpeed: 1.5, languageChoice: null, voiceList: DEFAULT_VOICE_LIST },
       credits: { used: 0 },
     });
     server.use(
@@ -226,7 +226,7 @@ describe("session persistence", () => {
         }),
       ],
       draft: "",
-      settings: { config: { mode: "single", singleSpeaker: PIPER, selectedVoices: [] }, globalSpeed: 1, languageChoice: null, voiceOrder: "name" },
+      settings: { config: { mode: "single", singleSpeaker: PIPER, selectedVoices: [] }, globalSpeed: 1, languageChoice: null, voiceList: DEFAULT_VOICE_LIST },
       credits: { used: 0 },
     });
     await openApp();
@@ -255,7 +255,7 @@ describe("Reset", () => {
     const view = await openApp();
     addWords("un champ", "une rivière");
     fireEvent.change(screen.getByLabelText("Global speed"), { target: { value: "1.5" } });
-    fireEvent.change(screen.getByLabelText("Sort voices"), { target: { value: "tier" } });
+    fireEvent.click(screen.getByLabelText("Price, low to high"));
     fireEvent.click(screen.getByText("Round Robin"));
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
 
@@ -266,7 +266,8 @@ describe("Reset", () => {
     );
     expect(screen.getByText(/Your queue is empty/)).not.toBeNull();
     expect(screen.getByLabelText("Global speed")).toHaveProperty("value", "1");
-    expect(screen.getByLabelText("Sort voices")).toHaveProperty("value", "name");
+    expect(screen.getByLabelText("Price, low to high")).toHaveProperty("checked", false);
+    expect(screen.getByLabelText("Tested voices only")).toHaveProperty("checked", true);
     expect(screen.getByLabelText("Speaker for every file")).toHaveProperty("value", "");
 
     await reload(view);
@@ -274,7 +275,8 @@ describe("Reset", () => {
     expect(screen.getByText(/Your queue is empty/)).not.toBeNull();
     expect(screen.queryByText("Queue restored")).toBeNull();
     expect(screen.getByLabelText("Global speed")).toHaveProperty("value", "1");
-    expect(screen.getByLabelText("Sort voices")).toHaveProperty("value", "name");
+    expect(screen.getByLabelText("Price, low to high")).toHaveProperty("checked", false);
+    expect(screen.getByLabelText("Tested voices only")).toHaveProperty("checked", true);
   });
 
   it("empties the Bulk Import box too, and says so before asking", async () => {
@@ -349,7 +351,7 @@ describe("voice sorting", () => {
     await openApp();
     addWords("un champ");
     fireEvent.click(screen.getByText("Per File"));
-    fireEvent.change(screen.getByLabelText("Sort voices"), { target: { value: "tier" } });
+    fireEvent.click(screen.getByLabelText("Price, low to high"));
 
     const picker = screen.getByLabelText("Speaker, row 1");
     expect([...picker.querySelectorAll("optgroup")].map((group) => group.label)).toEqual([
@@ -369,7 +371,7 @@ function saveQueue(items: QueueItem[], changes: Partial<SessionSnapshot> = {}) {
   saveSession({
     items,
     draft: "",
-    settings: { config: { mode: "single", singleSpeaker: PIPER, selectedVoices: [] }, globalSpeed: 1, languageChoice: null, voiceOrder: "name" },
+    settings: { config: { mode: "single", singleSpeaker: PIPER, selectedVoices: [] }, globalSpeed: 1, languageChoice: null, voiceList: DEFAULT_VOICE_LIST },
     credits: { used: 0 },
     ...changes,
   });
@@ -681,11 +683,59 @@ describe("Follows speed sorting", () => {
     render(<App />);
     await screen.findByText(/3 voices loaded/);
 
-    fireEvent.change(screen.getByLabelText("Sort voices"), { target: { value: "followsSpeed" } });
+    fireEvent.click(screen.getByLabelText("Responds to speed control"));
+    fireEvent.click(screen.getByLabelText("Price, low to high"));
 
     const picker = screen.getByLabelText("Speaker for every file");
     expect([...picker.querySelectorAll("optgroup")].map((group) => [group.label, [...group.querySelectorAll("option")].map((o) => o.textContent)])).toEqual([
       ["Free tier · 1 credit per character", ["Siwis (kokoro)", "Siwis (French) (piper)"]],
+    ]);
+  });
+});
+
+describe("Sort voices checkboxes", () => {
+  beforeEach(() => {
+    server.use(
+      http.get(`${API}/voices/`, () =>
+        HttpResponse.json({
+          voices: [
+            { id: "fr_FR-siwis-medium", model: "piper", name: "Siwis", language: "fr" },
+            { id: "fr_test", model: "xtts", name: "Xavier", language: "fr" },
+            { id: "FR", model: "melotts", name: "French", language: "fr" },
+            { id: "v2/en_speaker_0", model: "bark", name: "English Male 1", language: "en" },
+          ],
+        }),
+      ),
+    );
+  });
+
+  const pickerOptions = () =>
+    [...screen.getByLabelText("Speaker for every file").querySelectorAll("option")].map((option) => option.textContent);
+
+  it("starts with tested voices only, A–Z, and Reset brings that back", async () => {
+    render(<App />);
+    await screen.findByText(/4 voices loaded/);
+    expect(pickerOptions()).toEqual(["Choose a speaker…", "French (melotts)", "Siwis (piper)"]);
+
+    fireEvent.click(screen.getByLabelText("Tested voices only"));
+    expect(pickerOptions()).toEqual(["Choose a speaker…", "French (melotts)", "Siwis (piper)", "Xavier (xtts)"]);
+    fireEvent.click(screen.getByLabelText("By name (A–Z)"));
+    expect(pickerOptions()).toEqual(["Choose a speaker…", "Siwis (piper)", "Xavier (xtts)", "French (melotts)"]);
+
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Reset" }));
+    expect(screen.getByLabelText("Tested voices only")).toHaveProperty("checked", true);
+    expect(screen.getByLabelText("By name (A–Z)")).toHaveProperty("checked", true);
+    expect(pickerOptions()).toEqual(["Choose a speaker…", "French (melotts)", "Siwis (piper)"]);
+  });
+
+  it("explains an empty list when the language has no tested voices", async () => {
+    render(<App />);
+    await screen.findByText(/4 voices loaded/);
+    fireEvent.change(screen.getByLabelText("Voice language"), { target: { value: "en" } });
+    expect(pickerOptions()).toEqual([
+      "Choose a speaker…",
+      "No tested voices here. Only French voices have been tested so far.",
     ]);
   });
 });

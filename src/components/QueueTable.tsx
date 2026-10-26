@@ -3,7 +3,7 @@ import type { Playback } from "../hooks/useAudioPlayer";
 import { previewSpeaker } from "../services/assignment";
 import type { QueueItem, QueueItemEdit, SpeakerConfig, Voice } from "../types/queue";
 import { pluralize } from "../utils/format";
-import { voiceName, type VoiceOrder } from "../utils/voices";
+import { voiceName, type VoiceListOptions } from "../utils/voices";
 import { Button } from "./Button";
 import { QueueRow } from "./QueueRow";
 import { Section } from "./Section";
@@ -13,7 +13,7 @@ interface QueueTableProps {
   config: SpeakerConfig;
   voices: Voice[];
   voicesByKey: ReadonlyMap<string, Voice>;
-  voiceOrder: VoiceOrder;
+  voiceList: VoiceListOptions;
   globalSpeed: number;
   outdatedIds: ReadonlySet<string>;
   locked: boolean;
@@ -66,7 +66,7 @@ function QueueTableComponent({
   config,
   voices,
   voicesByKey,
-  voiceOrder,
+  voiceList,
   globalSpeed,
   outdatedIds,
   locked,
@@ -120,7 +120,7 @@ function QueueTableComponent({
                   assignedSpeaker={assignedSpeakerLabel(item, index, config, voicesByKey)}
                   voices={voices}
                   voicesByKey={voicesByKey}
-                  voiceOrder={voiceOrder}
+                  voiceList={voiceList}
                   outdated={outdatedIds.has(item.id)}
                   locked={locked}
                   onEdit={onEdit}

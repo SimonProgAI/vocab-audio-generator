@@ -1,13 +1,13 @@
 import { Fragment } from "react";
 import type { Voice } from "../types/queue";
-import { arrangeVoices, formatVoiceLabel, type VoiceOrder } from "../utils/voices";
+import { arrangeVoices, emptyListMessage, formatVoiceLabel, type VoiceListOptions } from "../utils/voices";
 import { FIELD_CLASS } from "./fieldStyles";
 
 interface VoiceSelectProps {
   id?: string;
   voices: Voice[];
   voicesByKey: ReadonlyMap<string, Voice>;
-  order: VoiceOrder;
+  voiceList: VoiceListOptions;
   value: string | undefined;
   onChange: (voiceKey: string) => void;
   placeholder: string;
@@ -27,17 +27,18 @@ export function VoiceSelect({
   id,
   voices,
   voicesByKey,
-  order,
+  voiceList,
   value,
   onChange,
   placeholder,
   disabled = false,
   ariaLabel,
 }: VoiceSelectProps) {
-  // Keep the current choice visible even when the language filter hides it.
   const current = value ? voicesByKey.get(value) : undefined;
-  const options =
-    current && !voices.some((voice) => voice.key === current.key) ? [current, ...voices] : voices;
+  const groups = arrangeVoices(voices, voiceList);
+  // Keep the current choice visible, first, even when the language or the checkboxes hide it.
+  const shownKeys = new Set(groups.flatMap((group) => group.voices.map((voice) => voice.key)));
+  const hiddenCurrent = current && !shownKeys.has(current.key) ? current : undefined;
 
   return (
     <select
@@ -51,7 +52,13 @@ export function VoiceSelect({
       <option value="" disabled>
         {placeholder}
       </option>
-      {arrangeVoices(options, order).map((group) =>
+      {hiddenCurrent && renderOption(hiddenCurrent)}
+      {groups.length === 0 && !hiddenCurrent && voices.length > 0 && (
+        <option value="" disabled>
+          {emptyListMessage(voiceList)}
+        </option>
+      )}
+      {groups.map((group) =>
         group.label ? (
           <optgroup key={group.key} label={group.label}>
             {group.voices.map(renderOption)}

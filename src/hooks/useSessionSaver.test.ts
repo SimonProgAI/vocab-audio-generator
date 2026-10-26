@@ -2,6 +2,7 @@
 import { cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { saveSession, type SessionSnapshot } from "../services/session";
+import { DEFAULT_VOICE_LIST } from "../utils/voices";
 import { SAVE_DELAY_MS, useSessionSaver } from "./useSessionSaver";
 
 vi.mock("../services/session", () => ({ saveSession: vi.fn() }));
@@ -10,7 +11,7 @@ function snapshot(draft: string): SessionSnapshot {
   return {
     items: [],
     draft,
-    settings: { config: { mode: "single", selectedVoices: [] }, globalSpeed: 1, languageChoice: null, voiceOrder: "name" },
+    settings: { config: { mode: "single", selectedVoices: [] }, globalSpeed: 1, languageChoice: null, voiceList: DEFAULT_VOICE_LIST },
     credits: { used: 0 },
   };
 }

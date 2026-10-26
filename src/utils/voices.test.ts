@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { Voice } from "../types/queue";
-import { arrangeVoices, followsSpeed, formatVoiceLabel, ignoresSpeed, isHiddenVoice, isVoiceOrder, voiceTier } from "./voices";
+import {
+  DEFAULT_VOICE_LIST,
+  arrangeVoices,
+  emptyListMessage,
+  followsSpeed,
+  formatVoiceLabel,
+  ignoresSpeed,
+  isHiddenVoice,
+  voiceTier,
+  wasTested,
+  type VoiceListOptions,
+} from "./voices";
 
 function voice(model: string | undefined, name: string): Voice {
   return { key: `${model}:${name}`, id: name, name, language: "fr", model };
@@ -21,32 +32,52 @@ describe("voiceTier", () => {
   });
 });
 
+const OFF: VoiceListOptions = { testedOnly: false, byPrice: false, followsSpeed: false, byName: false };
+const names = (groups: ReturnType<typeof arrangeVoices>) => groups.map((group) => [group.label, group.voices.map((v) => v.name)]);
+
 describe("arrangeVoices", () => {
+  // Deliberately not alphabetical, like TTS.ai's own order.
   const voices = [
-    voice("openvoice", "Alice"),
-    voice("piper", "Bruno"),
-    voice("zonos", "Chloé"),
-    voice("bark", "Denis"),
     voice("melotts", "Élise"),
+    voice("openvoice", "Alice"),
+    voice("zonos", "Chloé"),
+    voice("piper", "Bruno"),
+    voice("bark", "Denis"),
   ];
 
-  it("keeps one unlabeled group, in the given order, when sorting by name", () => {
-    expect(arrangeVoices(voices, "name")).toEqual([{ key: "all", voices }]);
+  it("keeps TTS.ai's order in one unlabeled group with every box off", () => {
+    expect(arrangeVoices(voices, OFF)).toEqual([{ key: "all", voices }]);
   });
 
-  it("groups by tier, cheapest first, keeping the given order within each tier", () => {
-    const groups = arrangeVoices(voices, "tier");
-    expect(groups.map((group) => [group.label, group.voices.map((v) => v.name)])).toEqual([
-      ["Free tier · 1 credit per character", ["Bruno", "Élise"]],
+  it("sorts A–Z by name, accents included", () => {
+    expect(names(arrangeVoices(voices, { ...OFF, byName: true }))).toEqual([[undefined, ["Alice", "Bruno", "Chloé", "Denis", "Élise"]]]);
+  });
+
+  it("puts the same name in model order", () => {
+    const twins = [voice("qwen3-tts", "Siwis"), voice("kokoro", "Siwis")];
+    expect(arrangeVoices(twins, { ...OFF, byName: true })[0]?.voices.map((v) => v.model)).toEqual(["kokoro", "qwen3-tts"]);
+  });
+
+  it("groups by price, cheapest first, keeping TTS.ai's order inside each group", () => {
+    expect(names(arrangeVoices(voices, { ...OFF, byPrice: true }))).toEqual([
+      ["Free tier · 1 credit per character", ["Élise", "Bruno"]],
       ["Standard · 2 credits per character", ["Denis"]],
       ["Premium · 4 credits per character", ["Alice"]],
       ["Price not known yet", ["Chloé"]],
     ]);
   });
 
-  it("leaves out empty tiers", () => {
-    expect(arrangeVoices([voice("piper", "Bruno")], "tier").map((group) => group.key)).toEqual(["free"]);
-    expect(arrangeVoices([], "tier")).toEqual([]);
+  it("groups by price with names A–Z inside each group when both are on", () => {
+    expect(names(arrangeVoices(voices, { ...OFF, byPrice: true, byName: true }))[0]).toEqual([
+      "Free tier · 1 credit per character",
+      ["Bruno", "Élise"],
+    ]);
+  });
+
+  it("leaves out empty tiers, and returns nothing when nothing is left", () => {
+    expect(arrangeVoices([voice("piper", "Bruno")], { ...OFF, byPrice: true }).map((group) => group.key)).toEqual(["free"]);
+    expect(arrangeVoices([], { ...OFF, byPrice: true })).toEqual([]);
+    expect(arrangeVoices([], OFF)).toEqual([]);
   });
 });
 
@@ -120,28 +151,59 @@ describe("followsSpeed", () => {
   );
 });
 
-describe("arrangeVoices followsSpeed", () => {
-  const french: Voice[] = [
+describe("arrangeVoices filters", () => {
+  const voices: Voice[] = [
     { key: "openvoice:FR", id: "FR", name: "French", language: "fr", model: "openvoice" },
     { key: "piper:fr_FR-siwis-medium", id: "fr_FR-siwis-medium", name: "Siwis (French)", language: "fr", model: "piper" },
-    { key: "vits:css10_fr", id: "css10_fr", name: "CSS10 (French)", language: "fr", model: "vits" },
+    { key: "bark:v2/en_speaker_0", id: "v2/en_speaker_0", name: "English Male 1", language: "en", model: "bark" },
     { key: "kokoro:ff_siwis", id: "ff_siwis", name: "Siwis", language: "fr", model: "kokoro" },
   ];
+  const keys = (options: VoiceListOptions) => arrangeVoices(voices, options).flatMap((group) => group.voices.map((v) => v.key));
 
-  it("keeps only voices known to follow speed, grouped by price", () => {
-    expect(arrangeVoices(french, "followsSpeed").map((group) => [group.label, group.voices.map((v) => v.key)])).toEqual([
-      ["Free tier · 1 credit per character", ["piper:fr_FR-siwis-medium", "kokoro:ff_siwis"]],
+  it("keeps only tested voices", () => {
+    expect(keys({ ...OFF, testedOnly: true })).toEqual(["openvoice:FR", "piper:fr_FR-siwis-medium", "kokoro:ff_siwis"]);
+  });
+
+  it("keeps only voices that respond to speed control", () => {
+    expect(keys({ ...OFF, followsSpeed: true })).toEqual(["piper:fr_FR-siwis-medium", "kokoro:ff_siwis"]);
+  });
+
+  it("combines all four boxes", () => {
+    expect(names(arrangeVoices(voices, { testedOnly: true, byPrice: true, followsSpeed: true, byName: true }))).toEqual([
+      ["Free tier · 1 credit per character", ["Siwis", "Siwis (French)"]],
     ]);
   });
 
-  it("is empty when none of the voices is known to follow speed", () => {
-    expect(arrangeVoices(french.slice(0, 1), "followsSpeed")).toEqual([]);
+  it("is empty when no voice gets through", () => {
+    expect(arrangeVoices(voices.slice(2, 3), { ...OFF, testedOnly: true })).toEqual([]);
   });
 });
 
-describe("isVoiceOrder", () => {
-  it("accepts the three orders and nothing else", () => {
-    expect(["name", "tier", "followsSpeed"].every(isVoiceOrder)).toBe(true);
-    expect(["price", "", undefined, 3].some(isVoiceOrder)).toBe(false);
+describe("wasTested", () => {
+  it.each(["kokoro:ff_siwis", "melotts:FR", "piper:fr_FR-siwis-medium", "openvoice:FR", "vits:css10_fr", "pocket-tts:fantine_fr", "qwen3-tts:eric_fr", "qwen3-tts:vivian_fr"])(
+    "is true for %s, one of the 8 French voices still shown",
+    (key) => {
+      expect(wasTested({ key })).toBe(true);
+    },
+  );
+
+  it.each(["bark:v2/en_speaker_0", "piper:en_US-lessac-medium", "kokoro:af_heart"])("is false for %s, which was never checked", (key) => {
+    expect(wasTested({ key })).toBe(false);
+  });
+});
+
+describe("DEFAULT_VOICE_LIST", () => {
+  it("starts with tested voices only, A–Z", () => {
+    expect(DEFAULT_VOICE_LIST).toEqual({ testedOnly: true, byPrice: false, followsSpeed: false, byName: true });
+  });
+});
+
+describe("emptyListMessage", () => {
+  it("explains which box emptied the list", () => {
+    expect(emptyListMessage({ ...OFF, testedOnly: true, followsSpeed: true })).toBe(
+      "No tested voices here. Only French voices have been tested so far.",
+    );
+    expect(emptyListMessage({ ...OFF, followsSpeed: true })).toBe("None of these voices is known to respond to speed control.");
+    expect(emptyListMessage(OFF)).toBe("No voices to show.");
   });
 });

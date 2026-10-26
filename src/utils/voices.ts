@@ -73,6 +73,15 @@ export function followsSpeed(voice: Pick<Voice, "key">): boolean {
   return FOLLOWS_SPEED.has(voice.key);
 }
 
+/**
+ * Every voice that passed the French check also went through the speed check, so a known speed
+ * result means the voice was tested. Today that's the French voices still shown; other languages
+ * haven't been checked.
+ */
+export function wasTested(voice: Pick<Voice, "key">): boolean {
+  return followsSpeed(voice) || ignoresSpeed(voice);
+}
+
 export function formatVoiceLabel(voice: Voice): string {
   const details = [voice.gender, voice.model].filter(Boolean).join(", ");
   const label = details ? `${voice.name} (${details})` : voice.name;
@@ -144,20 +153,29 @@ export function voiceTier(voice: Pick<Voice, "model">): VoiceTier {
   return (voice.model && MODEL_TIERS.get(voice.model)) || "unknown";
 }
 
-/**
- * How every speaker list is ordered: alphabetically, grouped by price tier (cheapest first), or
- * only the voices known to follow the speed setting, grouped by price tier.
- */
-export type VoiceOrder = "name" | "tier" | "followsSpeed";
+/** How every speaker list is filtered and sorted (the Sort voices checkboxes). */
+export interface VoiceListOptions {
+  /** Only voices that were tested (see wasTested). */
+  testedOnly: boolean;
+  /** Group by price tier, cheapest first. */
+  byPrice: boolean;
+  /** Only voices the speed check found to respond to the speed setting. */
+  followsSpeed: boolean;
+  /** A–Z by name (within each price group); otherwise TTS.ai's own order. */
+  byName: boolean;
+}
 
-export const VOICE_ORDERS: ReadonlyArray<{ value: VoiceOrder; label: string }> = [
-  { value: "name", label: "By name" },
-  { value: "tier", label: "By price, free tier first" },
-  { value: "followsSpeed", label: "Follows speed, by price" },
+export const DEFAULT_VOICE_LIST: VoiceListOptions = { testedOnly: true, byPrice: false, followsSpeed: false, byName: true };
+
+export const VOICE_LIST_CHECKBOXES: ReadonlyArray<{ option: keyof VoiceListOptions; label: string }> = [
+  { option: "testedOnly", label: "Tested voices only" },
+  { option: "byPrice", label: "Price, low to high" },
+  { option: "followsSpeed", label: "Responds to speed control" },
+  { option: "byName", label: "By name (A–Z)" },
 ];
 
-export function isVoiceOrder(value: unknown): value is VoiceOrder {
-  return VOICE_ORDERS.some((order) => order.value === value);
+function byName(a: Voice, b: Voice): number {
+  return a.name.localeCompare(b.name) || (a.model ?? "").localeCompare(b.model ?? "");
 }
 
 export interface VoiceGroup {
@@ -167,13 +185,27 @@ export interface VoiceGroup {
   voices: Voice[];
 }
 
-/** Keeps the incoming (alphabetical) order within each group. Empty tiers are left out. */
-export function arrangeVoices(voices: readonly Voice[], order: VoiceOrder): VoiceGroup[] {
-  if (order === "name") return [{ key: "all", voices: [...voices] }];
-  const shown = order === "followsSpeed" ? voices.filter(followsSpeed) : voices;
+/**
+ * Applies the filters, then sorts: by price groups the voices by tier (empty tiers are left out),
+ * and by name orders them A–Z, inside each group when both are on. With neither, voices keep
+ * TTS.ai's order. Returns no groups when no voice is left.
+ */
+export function arrangeVoices(voices: readonly Voice[], options: VoiceListOptions): VoiceGroup[] {
+  const filtered = voices.filter(
+    (voice) => (!options.testedOnly || wasTested(voice)) && (!options.followsSpeed || followsSpeed(voice)),
+  );
+  const shown = options.byName ? [...filtered].sort(byName) : filtered;
+  if (!options.byPrice) return shown.length > 0 ? [{ key: "all", voices: shown }] : [];
   return TIER_ORDER.map((tier) => ({
     key: tier,
     label: TIER_LABELS[tier],
     voices: shown.filter((voice) => voiceTier(voice) === tier),
   })).filter((group) => group.voices.length > 0);
+}
+
+/** Why a list came out empty, in the words of the Sort voices checkboxes. */
+export function emptyListMessage(options: VoiceListOptions): string {
+  if (options.testedOnly) return "No tested voices here. Only French voices have been tested so far.";
+  if (options.followsSpeed) return "None of these voices is known to respond to speed control.";
+  return "No voices to show.";
 }

@@ -276,9 +276,8 @@ function parseVoices(data: unknown): Voice[] {
       gender: readString(entry, "gender"),
     });
   }
-  return [...voices.values()].sort(
-    (a, b) => a.name.localeCompare(b.name) || (a.model ?? "").localeCompare(b.model ?? ""),
-  );
+  // In TTS.ai's order; the Sort voices checkboxes decide how lists are sorted.
+  return [...voices.values()];
 }
 
 export interface SubmittedJob {
