@@ -118,6 +118,27 @@ describe("queueReducer expire", () => {
   });
 });
 
+describe("queueReducer downloaded", () => {
+  const url = "https://cdn.tts.ai/job-1/tts_output.mp3";
+  const done = (overrides: Partial<QueueItem> = {}): QueueItem => ({ ...first(add("bonjour")), ...completed, downloadUrl: url, ...overrides });
+
+  it("marks rows whose file was saved", () => {
+    const row = done();
+    expect(first(queueReducer([row], { type: "downloaded", files: [{ id: row.id, url }] })).downloadedUrl).toBe(url);
+  });
+
+  it("leaves a row alone when it has a different link by now, e.g. after regenerating", () => {
+    const row = done({ downloadUrl: "https://cdn.tts.ai/job-2/tts_output.mp3" });
+    expect(queueReducer([row], { type: "downloaded", files: [{ id: row.id, url }] })).toEqual([row]);
+  });
+
+  it("only touches the listed rows", () => {
+    const row = done();
+    const other = { ...done(), id: "other" };
+    expect(queueReducer([row, other], { type: "downloaded", files: [{ id: row.id, url }] })[1]).toBe(other);
+  });
+});
+
 describe("computeStats", () => {
   it("counts rows by status", () => {
     const [a, b, c] = add("a", "b", "c");

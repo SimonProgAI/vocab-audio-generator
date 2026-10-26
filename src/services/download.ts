@@ -17,12 +17,19 @@ export interface ZipResult {
   skipped: string[];
   /** Left-out rows whose audio link has expired, with the link that failed. */
   expired: Array<{ id: string; url: string }>;
+  /** Rows whose file is in the saved ZIP, with the link it came from. Empty when nothing was saved. */
+  saved: Array<{ id: string; url: string }>;
 }
 
 type DownloadableItem = QueueItem & { downloadUrl: string };
 
 export function isDownloadable(item: QueueItem): item is DownloadableItem {
   return item.status === "completed" && Boolean(item.downloadUrl);
+}
+
+/** A row whose current audio was already saved, by Download or in the ZIP. */
+export function wasDownloaded(item: QueueItem): boolean {
+  return isDownloadable(item) && item.downloadedUrl === item.downloadUrl;
 }
 
 export function toMp3Name(filename: string): string {
@@ -86,6 +93,7 @@ export async function downloadAllCompleted(
   const zip = new JSZip();
   const skipped: string[] = [];
   const expired: ZipResult["expired"] = [];
+  const failed = new Set<string>();
   let done = 0;
   onProgress?.({ done, total: entries.length });
 
@@ -94,6 +102,7 @@ export async function downloadAllCompleted(
       zip.file(name, await loadAudio(item.downloadUrl));
     } catch (error) {
       skipped.push(name);
+      failed.add(item.id);
       if (isExpiredAudioError(error)) expired.push({ id: item.id, url: item.downloadUrl });
     } finally {
       done += 1;
@@ -101,8 +110,9 @@ export async function downloadAllCompleted(
     }
   });
 
-  if (skipped.length === entries.length) return { added: 0, skipped, expired };
+  if (skipped.length === entries.length) return { added: 0, skipped, expired, saved: [] };
   // MP3 is already compressed, so JSZip's default STORE mode is the right choice.
   saveBlob(await zip.generateAsync({ type: "blob" }), ZIP_FILENAME);
-  return { added: entries.length - skipped.length, skipped, expired };
+  const saved = entries.filter(({ item }) => !failed.has(item.id)).map(({ item }) => ({ id: item.id, url: item.downloadUrl }));
+  return { added: saved.length, skipped, expired, saved };
 }

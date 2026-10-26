@@ -137,6 +137,7 @@ function parseItem(value: unknown): QueueItem | undefined {
     speaker: optionalString(value.speaker),
     jobId: optionalString(value.jobId),
     downloadUrl: optionalString(value.downloadUrl),
+    downloadedUrl: optionalString(value.downloadedUrl),
     error: optionalString(value.error),
     generatedWith: parseSnapshot(value.generatedWith),
   };

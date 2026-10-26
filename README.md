@@ -115,6 +115,11 @@ src/
   price tier (free = 1 credit per character, standard = 2, premium = 4), measured with
   `npm run benchmark:voices`. **Price, low to high** groups every speaker list by tier;
   unmapped models appear under "Price not known yet".
+- **Downloaded mark**: once a row's file is saved, by **Download** or inside **Download All
+  (ZIP)**, its button turns amber and reads **Download again**. The mark (`downloadedUrl` on the
+  row) only counts while it matches the row's audio link, so regenerating clears it, and it's
+  saved with the session. Buttons darken on hover and press down on click (no animation for people
+  who ask their system for less motion).
 - **Credits**: the toolbar adds up `credits_used` from every job this tab submitted, including
   voice samples (audio TTS.ai already had costs 0). It also shows the latest `credits_remaining`,
   labeled as TTS.ai's figure because it didn't drop while jobs were being charged. TTS.ai has no
@@ -190,7 +195,15 @@ key ships with the site. A key a visitor ticks **Remember** for is kept in `loca
 
 ## TODO
 
-Nothing open right now.
+- [ ] **Clear Queue keeps the Bulk Import text**: clearing the queue must not empty the Bulk Import
+  box. In the current code `handleClear` only empties the queue, and a test on 2026-10-26 kept the
+  text; the box does empty on **Add To Queue** (by design, so words aren't added twice) and on
+  **Reset**. Reproduce the report first, then add a regression test in `App.test.tsx`.
+- [ ] **Tab icon**: use the header's icon (blue rounded square with white sound-wave bars) as the
+  favicon. Add `public/favicon.svg` with the same shapes (`rounded-lg bg-blue-600`, path
+  `M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4`) and `<link rel="icon" type="image/svg+xml"
+  href="./favicon.svg">` in `index.html` (a relative path, for GitHub Pages). Consider a PNG
+  fallback for browsers without SVG favicon support.
 
 ## License
 

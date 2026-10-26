@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { wavBlob } from "../test/wav";
 import type { QueueItem } from "../types/queue";
 import { clearAudioCache, loadAudio } from "./audio";
-import { downloadAllCompleted, downloadItem, isDownloadable, toMp3Name } from "./download";
+import { downloadAllCompleted, downloadItem, isDownloadable, toMp3Name, wasDownloaded } from "./download";
 import { TtsApiError, downloadAudio } from "./ttsApi";
 
 vi.mock("./ttsApi", async (importOriginal) => ({ ...(await importOriginal<object>()), downloadAudio: vi.fn() }));
@@ -32,6 +32,18 @@ describe("toMp3Name", () => {
     ["", "audio.mp3"],
   ])("%j → %j", (filename, expected) => {
     expect(toMp3Name(filename)).toBe(expected);
+  });
+});
+
+describe("wasDownloaded", () => {
+  it("is true while the saved link is still the row's link", () => {
+    expect(wasDownloaded({ ...completed, downloadedUrl: completed.downloadUrl })).toBe(true);
+  });
+
+  it("is false before saving, after regenerating, and for rows without audio", () => {
+    expect(wasDownloaded(completed)).toBe(false);
+    expect(wasDownloaded({ ...completed, downloadedUrl: "https://cdn.tts.ai/old/tts_output.mp3" })).toBe(false);
+    expect(wasDownloaded({ ...completed, status: "pending", downloadUrl: undefined, downloadedUrl: completed.downloadUrl })).toBe(false);
   });
 });
 
@@ -148,6 +160,7 @@ describe("downloadAllCompleted", () => {
       added: 1,
       skipped: ["un_champ.mp3"],
       expired: [{ id: "row-2", url: "https://cdn.tts.ai/job-2/tts_output.mp3" }],
+      saved: [{ id: "row-1", url: "https://api.tts.ai/files/une_riviere.mp3" }],
     });
     expect(HTMLAnchorElement.prototype.click).toHaveBeenCalledTimes(1);
   });
@@ -165,7 +178,31 @@ describe("downloadAllCompleted", () => {
     const result = await downloadAllCompleted([completed, second]);
 
     expect(result.added).toBe(0);
+    expect(result.saved).toEqual([]);
     expect(result.expired.map((entry) => entry.id)).toEqual(["row-1", "row-2"]);
     expect(HTMLAnchorElement.prototype.click).not.toHaveBeenCalled();
+  });
+});
+
+describe("downloadAllCompleted saved rows", () => {
+  beforeEach(() => {
+    vi.mocked(downloadAudio).mockReset();
+    clearAudioCache();
+    URL.createObjectURL = vi.fn(() => "blob:zip");
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("lists every row whose file went into the ZIP, with its link", async () => {
+    const second: QueueItem = { ...completed, id: "row-2", filename: "un_champ", downloadUrl: "https://cdn.tts.ai/job-2/tts_output.mp3" };
+    vi.mocked(downloadAudio).mockResolvedValue(audio);
+    expect((await downloadAllCompleted([completed, second])).saved).toEqual([
+      { id: "row-1", url: "https://api.tts.ai/files/une_riviere.mp3" },
+      { id: "row-2", url: "https://cdn.tts.ai/job-2/tts_output.mp3" },
+    ]);
   });
 });

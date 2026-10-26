@@ -27,6 +27,7 @@ const snapshot: SessionSnapshot = {
       speaker: "piper:siwis",
       jobId: "job-2",
       downloadUrl: "https://cdn.tts.ai/job-2/tts_output.mp3",
+      downloadedUrl: "https://cdn.tts.ai/job-2/tts_output.mp3",
       generatedWith: { speaker: "piper:siwis", speed: 1.2 },
     }),
     row({ id: "row-3", status: "failed", error: "Voice crashed", overrideSpeed: true, speed: 0.8 }),

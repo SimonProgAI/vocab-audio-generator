@@ -36,6 +36,11 @@ export interface QueueItem {
   status: QueueStatus;
   jobId?: string;
   downloadUrl?: string;
+  /**
+   * The downloadUrl whose file was saved, by Download or in the ZIP. The row counts as downloaded
+   * only while this still equals downloadUrl, so regenerating (a new link) clears the mark.
+   */
+  downloadedUrl?: string;
   error?: string;
   generatedWith?: GenerationSnapshot;
 }

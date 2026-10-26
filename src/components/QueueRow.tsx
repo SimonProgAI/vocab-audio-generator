@@ -1,5 +1,6 @@
 import { memo, useState, type ReactNode } from "react";
 import type { PlaybackState } from "../hooks/useAudioPlayer";
+import { wasDownloaded } from "../services/download";
 import { SAMPLE_TEXT } from "../services/voiceSample";
 import type { QueueItem, QueueItemEdit, Voice } from "../types/queue";
 import { SPEED_OPTIONS, effectiveSpeed, formatSpeed } from "../utils/speed";
@@ -57,6 +58,7 @@ function QueueRowComponent({
   const [downloading, setDownloading] = useState(false);
   const row = index + 1;
   const canDownload = item.status === "completed" && Boolean(item.downloadUrl);
+  const downloaded = wasDownloaded(item);
   const sample = item.status === "pending" ? sampleVoice : undefined;
 
   let playControl: ReactNode = null;
@@ -205,8 +207,14 @@ function QueueRowComponent({
         <div className="flex items-center justify-end gap-1">
           {playControl}
           {canDownload && (
-            <Button size="sm" onClick={handleDownload} disabled={downloading}>
-              {downloading ? "Saving…" : "Download"}
+            <Button
+              size="sm"
+              variant={downloaded ? "repeat" : "secondary"}
+              onClick={handleDownload}
+              disabled={downloading}
+              title={downloaded ? "You saved this file already. Click to save it again." : undefined}
+            >
+              {downloading ? "Saving…" : downloaded ? "Download again" : "Download"}
             </Button>
           )}
           <Button

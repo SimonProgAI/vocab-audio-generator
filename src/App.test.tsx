@@ -803,3 +803,42 @@ describe("review fixes, through the whole app", () => {
     ]);
   });
 });
+
+describe("downloaded mark", () => {
+  it("turns Download into Download again once the file is saved, and keeps it after a reload", async () => {
+    serveFile();
+    saveQueue([completedRow]);
+    const view = await openApp();
+
+    fireEvent.click(queueRow(1).getByRole("button", { name: "Download" }));
+
+    expect(await queueRow(1).findByRole("button", { name: "Download again" })).not.toBeNull();
+    await reload(view);
+    expect(queueRow(1).getByRole("button", { name: "Download again" })).not.toBeNull();
+  });
+
+  it("marks the rows whose files went into the ZIP, and not the ones left out", async () => {
+    const other = "https://cdn.tts.ai/job-2/tts_output.mp3";
+    serveFile();
+    // 403: refused without retries, and not an expired link, so the row stays Completed.
+    server.use(http.get(other, () => HttpResponse.json({}, { status: 403 })));
+    saveQueue([completedRow, { ...completedRow, id: "row-2", text: "une rivière", filename: "une_riviere", downloadUrl: other }]);
+    await openApp();
+
+    fireEvent.click(screen.getByRole("button", { name: /Download All \(ZIP\)/ }));
+
+    expect(await queueRow(1).findByRole("button", { name: "Download again" })).not.toBeNull();
+    expect(queueRow(2).getByRole("button", { name: "Download" })).not.toBeNull();
+  });
+
+  it("isn't marked when the download fails", async () => {
+    serveFile(() => HttpResponse.json({}, { status: 403 }));
+    saveQueue([completedRow]);
+    await openApp();
+
+    fireEvent.click(queueRow(1).getByRole("button", { name: "Download" }));
+
+    expect(await screen.findByText("Couldn't download un_champ.mp3")).not.toBeNull();
+    expect(queueRow(1).getByRole("button", { name: "Download" })).not.toBeNull();
+  });
+});

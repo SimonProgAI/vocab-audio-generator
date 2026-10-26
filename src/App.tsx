@@ -198,11 +198,12 @@ export default function App() {
     async (item: QueueItem) => {
       try {
         await downloadItem(item);
+        if (item.downloadUrl) actions.markDownloaded([{ id: item.id, url: item.downloadUrl }]);
       } catch (error) {
         reportAudioError(item, "download", error);
       }
     },
-    [reportAudioError],
+    [actions, reportAudioError],
   );
 
   const handlePlay = useCallback(
@@ -238,6 +239,7 @@ export default function App() {
     try {
       const result = await downloadAllCompleted(items, setZipProgress);
       for (const { id, url } of result.expired) actions.expire(id, url, EXPIRED_AUDIO_MESSAGE);
+      actions.markDownloaded(result.saved);
       const expiredNote =
         result.expired.length > 0
           ? [

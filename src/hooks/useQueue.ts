@@ -16,7 +16,8 @@ type QueueAction =
   | { type: "remove"; id: string }
   | { type: "clear" }
   | { type: "progress"; updates: QueueItemUpdate[] }
-  | { type: "expire"; id: string; url: string; error: string };
+  | { type: "expire"; id: string; url: string; error: string }
+  | { type: "downloaded"; files: ReadonlyArray<{ id: string; url: string }> };
 
 const RESET_GENERATION: QueueItemProgress = {
   status: "pending",
@@ -72,6 +73,13 @@ export function queueReducer(state: QueueItem[], action: QueueAction): QueueItem
           ? { ...item, ...RESET_GENERATION, status: "failed", error: action.error }
           : item,
       );
+    case "downloaded": {
+      const saved = new Map(action.files.map(({ id, url }) => [id, url]));
+      // Only while the row still has the link that was saved: it may have been regenerated meanwhile.
+      return state.map((item) =>
+        item.downloadUrl && saved.get(item.id) === item.downloadUrl ? { ...item, downloadedUrl: item.downloadUrl } : item,
+      );
+    }
   }
 }
 
@@ -97,6 +105,8 @@ export interface QueueActions {
   applyProgress: (updates: QueueItemUpdate[]) => void;
   /** Fails a row whose audio link no longer works, unless the row has a different link by now. */
   expire: (id: string, url: string, error: string) => void;
+  /** Marks rows whose file was saved, unless a row has a different link by now. */
+  markDownloaded: (files: ReadonlyArray<{ id: string; url: string }>) => void;
 }
 
 /** `initialItems` seeds the queue on first render, e.g. rows restored after a reload. */
@@ -112,6 +122,7 @@ export function useQueue(initialItems: readonly QueueItem[] = []) {
       clear: () => dispatch({ type: "clear" }),
       applyProgress: (updates) => dispatch({ type: "progress", updates }),
       expire: (id, url, error) => dispatch({ type: "expire", id, url, error }),
+      markDownloaded: (files) => dispatch({ type: "downloaded", files }),
     }),
     [],
   );

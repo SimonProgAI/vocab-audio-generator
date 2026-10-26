@@ -181,3 +181,26 @@ describe("QueueRow Sample button", () => {
     expect(onStopPlayback).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("QueueRow downloaded mark", () => {
+  const saved: QueueItem = { ...completed, downloadedUrl: completed.downloadUrl };
+
+  it("reads Download again, in amber, once the file was saved", () => {
+    renderRow(saved);
+    const again = screen.getByRole("button", { name: "Download again" });
+    expect(again.className).toContain("bg-amber-50");
+    expect(again.getAttribute("title")).toBe("You saved this file already. Click to save it again.");
+    expect(button("Download")).toBeNull();
+  });
+
+  it("still saves the file again when clicked", () => {
+    const { onDownload } = renderRow(saved);
+    fireEvent.click(screen.getByRole("button", { name: "Download again" }));
+    expect(onDownload).toHaveBeenCalledExactlyOnceWith(saved);
+  });
+
+  it("goes back to a plain Download after regenerating, which gives the row a new link", () => {
+    renderRow({ ...saved, downloadUrl: "https://cdn.tts.ai/new/tts_output.mp3" });
+    expect(screen.getByRole("button", { name: "Download" }).className).not.toContain("bg-amber-50");
+  });
+});
