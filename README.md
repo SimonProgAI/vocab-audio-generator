@@ -87,11 +87,12 @@ src/
 - **Reset**: the header's **Reset** button (after a confirmation) empties the queue and the Bulk
   Import box and restores the default settings, so a reload afterwards starts blank.
   **Clear Queue** only removes the files.
-- **Voice quality**: 8 of the 17 voices TTS.ai labels French are hidden (`HIDDEN_VOICES` in
+- **Voice quality**: 9 of the 17 voices TTS.ai labels French are hidden (`HIDDEN_VOICES` in
   `utils/voices.ts`). In a check on 2026-10-26, where each voice said a word and a sentence and
   TTS.ai's speech-to-text transcribed them, they added words, repeated or garbled the text, or
-  always failed. Voices whose audio didn't get slower at 0.5× and faster at 2× are labeled
-  "ignores speed" (`IGNORES_SPEED`); of the French voices, only kokoro, melotts and piper follow it
+  always failed; bark-small was dropped later because its clips stop abruptly mid-sound. Voices
+  whose audio didn't get slower at 0.5× and faster at 2× are labeled "ignores speed"
+  (`IGNORES_SPEED`); of the French voices, only kokoro, melotts and piper follow it
   (`FOLLOWS_SPEED`). **Sort voices → Follows speed, by price** lists just those, cheapest first;
   voices nobody has checked aren't assumed to follow it.
 - **Real MP3s**: piper, vits and bark-small return WAV even though the app asks for MP3 (TTS.ai
@@ -172,7 +173,7 @@ key ships with the site. A key a visitor ticks **Remember** for is kept in `loca
   `npm run benchmark:voices` measures this (see [Benchmarking voices](#benchmarking-voices)).
 - **Failing speakers**: French voices that failed or didn't speak French reliably are hidden (see
   **Voice quality** above). Re-check them now and then: TTS.ai changes its models.
-- **Speed**: 6 of the 9 remaining French voices ignore the speed setting; their labels say so.
+- **Speed**: 5 of the 8 remaining French voices ignore the speed setting; their labels say so.
 
 ## TODO
 

@@ -56,7 +56,6 @@ const IGNORES_SPEED: ReadonlySet<string> = new Set([
   "pocket-tts:fantine_fr", // Shorter at 0.5× (1.27 s) than at 1× (1.68 s).
   "qwen3-tts:eric_fr", // Shorter at 0.5× (1.61 s) than at 1× (2.71 s).
   "qwen3-tts:vivian_fr", // Shorter at 0.5× (1.99 s) than at 1× (2.57 s).
-  "bark-small:v2/fr_speaker_0", // Longer at 2× (1.32 s) than at 1× (0.92 s).
 ]);
 
 export function ignoresSpeed(voice: Pick<Voice, "key">): boolean {
@@ -84,10 +83,13 @@ export function formatVoiceLabel(voice: Voice): string {
  * Voices labeled French that don't reliably speak it, so the app leaves them out. Checked on
  * 2026-10-26: each voice said a word and a sentence, and TTS.ai's speech-to-text (Whisper)
  * transcribed them. These added words, repeated or garbled the text, or always fail to generate.
+ * bark-small passed that check but was dropped later: its clips stop abruptly mid-sound, it
+ * ignores the speed setting, and it is slow.
  */
 const HIDDEN_VOICES: ReadonlySet<string> = new Set([
   "bark:v2/fr_speaker_0", // Added a word: "Bernie, une rivière?"
   "bark:v2/fr_speaker_1", // Added words: "Bonjour tout lui, je m'appelle…"
+  "bark-small:v2/fr_speaker_0", // Clips end abruptly mid-sound, heard as "Une rivière est..."; ignores speed.
   "cosyvoice2:French Female", // Said the word 5 times, heard as English; garbled the sentence.
   "cosyvoice3:法文女", // Said the word 4 times; the sentence timed out after 8 minutes.
   "moss-tts:default_fr", // TTS.ai: "model_disabled".

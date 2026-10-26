@@ -54,6 +54,7 @@ describe("isHiddenVoice", () => {
   it.each([
     "bark:v2/fr_speaker_0",
     "bark:v2/fr_speaker_1",
+    "bark-small:v2/fr_speaker_0",
     "cosyvoice2:French Female",
     "cosyvoice3:法文女",
     "moss-tts:default_fr",
@@ -64,7 +65,7 @@ describe("isHiddenVoice", () => {
     expect(isHiddenVoice({ key })).toBe(true);
   });
 
-  it.each(["bark-small:v2/fr_speaker_0", "pocket-tts:fantine_fr", "vits:css10_fr", "piper:fr_FR-siwis-medium", "bark:v2/en_speaker_0"])(
+  it.each(["pocket-tts:fantine_fr", "vits:css10_fr", "piper:fr_FR-siwis-medium", "bark:v2/en_speaker_0", "bark-small:v2/en_speaker_0"])(
     "keeps %s",
     (key) => {
       expect(isHiddenVoice({ key })).toBe(false);
@@ -79,7 +80,6 @@ describe("ignoresSpeed", () => {
     "pocket-tts:fantine_fr",
     "qwen3-tts:eric_fr",
     "qwen3-tts:vivian_fr",
-    "bark-small:v2/fr_speaker_0",
   ])("marks %s, whose audio didn't follow the speed check", (key) => {
     expect(ignoresSpeed({ key })).toBe(true);
   });
