@@ -664,3 +664,28 @@ describe("hidden voices", () => {
     expect(options).toEqual(["Choose a speaker…", "Fantine (French) (pocket-tts) · ignores speed", "Siwis (piper)"]);
   });
 });
+
+describe("Follows speed sorting", () => {
+  it("lists only voices known to follow the speed setting in every picker", async () => {
+    server.use(
+      http.get(`${API}/voices/`, () =>
+        HttpResponse.json({
+          voices: [
+            { id: "fr_FR-siwis-medium", model: "piper", name: "Siwis (French)", language: "fr" },
+            { id: "FR", model: "openvoice", name: "French", language: "fr" },
+            { id: "ff_siwis", model: "kokoro", name: "Siwis", language: "fr" },
+          ],
+        }),
+      ),
+    );
+    render(<App />);
+    await screen.findByText(/3 voices loaded/);
+
+    fireEvent.change(screen.getByLabelText("Sort voices"), { target: { value: "followsSpeed" } });
+
+    const picker = screen.getByLabelText("Speaker for every file");
+    expect([...picker.querySelectorAll("optgroup")].map((group) => [group.label, [...group.querySelectorAll("option")].map((o) => o.textContent)])).toEqual([
+      ["Free tier · 1 credit per character", ["Siwis (kokoro)", "Siwis (French) (piper)"]],
+    ]);
+  });
+});

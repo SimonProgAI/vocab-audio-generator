@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Voice } from "../types/queue";
-import { arrangeVoices, formatVoiceLabel, ignoresSpeed, isHiddenVoice, voiceTier } from "./voices";
+import { arrangeVoices, followsSpeed, formatVoiceLabel, ignoresSpeed, isHiddenVoice, isVoiceOrder, voiceTier } from "./voices";
 
 function voice(model: string | undefined, name: string): Voice {
   return { key: `${model}:${name}`, id: name, name, language: "fr", model };
@@ -104,5 +104,44 @@ describe("formatVoiceLabel", () => {
 
   it("shows just the name when there are no details", () => {
     expect(formatVoiceLabel({ key: "custom", id: "custom", name: "Custom", language: "fr" })).toBe("Custom");
+  });
+});
+
+describe("followsSpeed", () => {
+  it.each(["kokoro:ff_siwis", "melotts:FR", "piper:fr_FR-siwis-medium"])("is true for %s, which the check found to follow speed", (key) => {
+    expect(followsSpeed({ key })).toBe(true);
+  });
+
+  it.each(["openvoice:FR", "vits:css10_fr", "piper:en_US-lessac-medium", "bark:v2/en_speaker_0"])(
+    "is false for %s: it ignores speed, or was never checked",
+    (key) => {
+      expect(followsSpeed({ key })).toBe(false);
+    },
+  );
+});
+
+describe("arrangeVoices followsSpeed", () => {
+  const french: Voice[] = [
+    { key: "openvoice:FR", id: "FR", name: "French", language: "fr", model: "openvoice" },
+    { key: "piper:fr_FR-siwis-medium", id: "fr_FR-siwis-medium", name: "Siwis (French)", language: "fr", model: "piper" },
+    { key: "vits:css10_fr", id: "css10_fr", name: "CSS10 (French)", language: "fr", model: "vits" },
+    { key: "kokoro:ff_siwis", id: "ff_siwis", name: "Siwis", language: "fr", model: "kokoro" },
+  ];
+
+  it("keeps only voices known to follow speed, grouped by price", () => {
+    expect(arrangeVoices(french, "followsSpeed").map((group) => [group.label, group.voices.map((v) => v.key)])).toEqual([
+      ["Free tier · 1 credit per character", ["piper:fr_FR-siwis-medium", "kokoro:ff_siwis"]],
+    ]);
+  });
+
+  it("is empty when none of the voices is known to follow speed", () => {
+    expect(arrangeVoices(french.slice(0, 1), "followsSpeed")).toEqual([]);
+  });
+});
+
+describe("isVoiceOrder", () => {
+  it("accepts the three orders and nothing else", () => {
+    expect(["name", "tier", "followsSpeed"].every(isVoiceOrder)).toBe(true);
+    expect(["price", "", undefined, 3].some(isVoiceOrder)).toBe(false);
   });
 });

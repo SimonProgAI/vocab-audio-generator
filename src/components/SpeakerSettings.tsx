@@ -16,6 +16,8 @@ import {
   formatVoiceLabel,
   voiceName,
   type LanguageSummary,
+  isVoiceOrder,
+  VOICE_ORDERS,
   type VoiceOrder,
 } from "../utils/voices";
 import { Button } from "./Button";
@@ -244,17 +246,28 @@ function SpeakerSettingsComponent({
             <select
               id={orderId}
               value={voiceOrder}
-              onChange={(event) => onVoiceOrderChange(event.target.value === "tier" ? "tier" : "name")}
+              onChange={(event) => {
+                if (isVoiceOrder(event.target.value)) onVoiceOrderChange(event.target.value);
+              }}
               disabled={pickersDisabled}
               className={FIELD_CLASS}
             >
-              <option value="name">By name</option>
-              <option value="tier">By price, free tier first</option>
+              {VOICE_ORDERS.map((order) => (
+                <option key={order.value} value={order.value}>
+                  {order.label}
+                </option>
+              ))}
             </select>
             {voiceOrder === "tier" && (
               <p className="mt-2 text-xs text-slate-500">
                 Prices come from TTS.ai's docs and a benchmark of the French voices. Other models are
                 listed under “Price not known yet”.
+              </p>
+            )}
+            {voiceOrder === "followsSpeed" && (
+              <p className="mt-2 text-xs text-slate-500">
+                Only voices a check found to follow the speed setting are listed, cheapest first. For
+                French, that's kokoro, melotts and piper; other languages haven't been checked yet.
               </p>
             )}
           </div>
@@ -316,6 +329,7 @@ interface VoiceChecklistProps {
 
 function VoiceChecklist({ voices, order, selected, onToggle, onSelectAll, onClear, disabled }: VoiceChecklistProps) {
   const selectedKeys = new Set(selected);
+  const groups = arrangeVoices(voices, order);
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
@@ -323,7 +337,7 @@ function VoiceChecklist({ voices, order, selected, onToggle, onSelectAll, onClea
           Voice pool <span className="font-normal text-slate-500">({selected.length} selected)</span>
         </span>
         <div className="flex gap-1">
-          <Button size="sm" variant="ghost" onClick={onSelectAll} disabled={disabled || voices.length === 0}>
+          <Button size="sm" variant="ghost" onClick={onSelectAll} disabled={disabled || groups.length === 0}>
             Select all shown
           </Button>
           <Button size="sm" variant="ghost" onClick={onClear} disabled={disabled || selected.length === 0}>
@@ -331,13 +345,13 @@ function VoiceChecklist({ voices, order, selected, onToggle, onSelectAll, onClea
           </Button>
         </div>
       </div>
-      {voices.length === 0 ? (
+      {groups.length === 0 ? (
         <p className="mt-2 rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-500">
-          No voices to show yet.
+          {voices.length === 0 ? "No voices to show yet." : "None of these voices is known to follow the speed setting."}
         </p>
       ) : (
         <div className="mt-2 max-h-60 space-y-2 overflow-y-auto rounded-lg border border-slate-200 bg-white p-1.5">
-          {arrangeVoices(voices, order).map((group) => (
+          {groups.map((group) => (
             <div key={group.key}>
               {group.label && <p className="px-2 pt-1 text-xs font-semibold text-slate-500">{group.label}</p>}
               <ul aria-label={group.label} className="grid grid-cols-1 gap-0.5 sm:grid-cols-2">

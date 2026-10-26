@@ -91,7 +91,14 @@ src/
   `utils/voices.ts`). In a check on 2026-10-26, where each voice said a word and a sentence and
   TTS.ai's speech-to-text transcribed them, they added words, repeated or garbled the text, or
   always failed. Voices whose audio didn't get slower at 0.5× and faster at 2× are labeled
-  "ignores speed" (`IGNORES_SPEED`); of the French voices, only kokoro, melotts and piper follow it.
+  "ignores speed" (`IGNORES_SPEED`); of the French voices, only kokoro, melotts and piper follow it
+  (`FOLLOWS_SPEED`). **Sort voices → Follows speed, by price** lists just those, cheapest first;
+  voices nobody has checked aren't assumed to follow it.
+- **Real MP3s**: piper, vits and bark-small return WAV even though the app asks for MP3 (TTS.ai
+  still labels it `audio/mpeg`). The first time such a file is played, downloaded or zipped, the
+  browser converts it to 64 kbps MP3 (`services/wavToMp3.ts`); loud float audio is turned down to
+  fit rather than clipped. If converting fails, the WAV is kept. The encoder is a separate file,
+  loaded only when a WAV turns up.
 - **Voice tiers**: the voice list has no prices, so `utils/voices.ts` maps each model to TTS.ai's
   price tier (free = 1 credit per character, standard = 2, premium = 4), measured with
   `npm run benchmark:voices`. **Sort voices → By price** groups every speaker list by tier;
@@ -166,9 +173,6 @@ key ships with the site. A key a visitor ticks **Remember** for is kept in `loca
 - **Failing speakers**: French voices that failed or didn't speak French reliably are hidden (see
   **Voice quality** above). Re-check them now and then: TTS.ai changes its models.
 - **Speed**: 6 of the 9 remaining French voices ignore the speed setting; their labels say so.
-- **WAV in .mp3 files**: piper, vits and bark-small return WAV audio even though the app asks for
-  MP3 (TTS.ai still labels it `audio/mpeg`), so those files are saved as `.mp3` but contain WAV.
-  Most players cope; strict ones may not.
 
 ## TODO
 
@@ -177,3 +181,7 @@ Nothing open right now.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The MP3 encoder, [`@breezystack/lamejs`](https://www.npmjs.com/package/@breezystack/lamejs) (a
+JavaScript port of LAME), is LGPL-3.0. It's built into its own file (`assets/wavToMp3-*.js`), so
+it can be replaced without touching the rest of the app.

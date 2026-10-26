@@ -1,7 +1,7 @@
 import type { AssignmentMode, GenerationSnapshot, QueueItem, QueueStatus, SpeakerConfig } from "../types/queue";
 import type { CreditUsage } from "../utils/credits";
 import { MAX_SPEED, MIN_SPEED } from "../utils/speed";
-import type { VoiceOrder } from "../utils/voices";
+import { isVoiceOrder, type VoiceOrder } from "../utils/voices";
 
 /**
  * The queue, the Bulk Import text and the settings are kept in sessionStorage, so a refresh or an
@@ -170,7 +170,7 @@ function parseSettings(value: unknown): Partial<SessionSettings> {
   if (value.languageChoice === null || typeof value.languageChoice === "string") {
     settings.languageChoice = value.languageChoice;
   }
-  if (value.voiceOrder === "name" || value.voiceOrder === "tier") settings.voiceOrder = value.voiceOrder;
+  if (isVoiceOrder(value.voiceOrder)) settings.voiceOrder = value.voiceOrder;
   return settings;
 }
 

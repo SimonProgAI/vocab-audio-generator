@@ -63,6 +63,17 @@ export function ignoresSpeed(voice: Pick<Voice, "key">): boolean {
   return IGNORES_SPEED.has(voice.key);
 }
 
+/** Voices the same check found to follow the speed setting. Unchecked voices aren't assumed to. */
+const FOLLOWS_SPEED: ReadonlySet<string> = new Set([
+  "kokoro:ff_siwis", // 2.98 s, 1.51 s, 0.79 s.
+  "melotts:FR", // 1.70 s, 0.99 s, 0.57 s.
+  "piper:fr_FR-siwis-medium", // 1.89 s, 1.07 s, 0.58 s.
+]);
+
+export function followsSpeed(voice: Pick<Voice, "key">): boolean {
+  return FOLLOWS_SPEED.has(voice.key);
+}
+
 export function formatVoiceLabel(voice: Voice): string {
   const details = [voice.gender, voice.model].filter(Boolean).join(", ");
   const label = details ? `${voice.name} (${details})` : voice.name;
@@ -131,8 +142,21 @@ export function voiceTier(voice: Pick<Voice, "model">): VoiceTier {
   return (voice.model && MODEL_TIERS.get(voice.model)) || "unknown";
 }
 
-/** How every speaker list is ordered: alphabetically, or grouped by price tier (cheapest first). */
-export type VoiceOrder = "name" | "tier";
+/**
+ * How every speaker list is ordered: alphabetically, grouped by price tier (cheapest first), or
+ * only the voices known to follow the speed setting, grouped by price tier.
+ */
+export type VoiceOrder = "name" | "tier" | "followsSpeed";
+
+export const VOICE_ORDERS: ReadonlyArray<{ value: VoiceOrder; label: string }> = [
+  { value: "name", label: "By name" },
+  { value: "tier", label: "By price, free tier first" },
+  { value: "followsSpeed", label: "Follows speed, by price" },
+];
+
+export function isVoiceOrder(value: unknown): value is VoiceOrder {
+  return VOICE_ORDERS.some((order) => order.value === value);
+}
 
 export interface VoiceGroup {
   key: string;
@@ -144,9 +168,10 @@ export interface VoiceGroup {
 /** Keeps the incoming (alphabetical) order within each group. Empty tiers are left out. */
 export function arrangeVoices(voices: readonly Voice[], order: VoiceOrder): VoiceGroup[] {
   if (order === "name") return [{ key: "all", voices: [...voices] }];
+  const shown = order === "followsSpeed" ? voices.filter(followsSpeed) : voices;
   return TIER_ORDER.map((tier) => ({
     key: tier,
     label: TIER_LABELS[tier],
-    voices: voices.filter((voice) => voiceTier(voice) === tier),
+    voices: shown.filter((voice) => voiceTier(voice) === tier),
   })).filter((group) => group.voices.length > 0);
 }

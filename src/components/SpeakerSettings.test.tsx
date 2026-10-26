@@ -11,6 +11,29 @@ const voices: Voice[] = [
   { key: "melotts:FR", id: "FR", name: "Mélo", language: "fr", model: "melotts" },
 ];
 
+function renderWith(shown: Voice[], voiceOrder: VoiceOrder, config: SpeakerConfig) {
+  const onConfigChange = vi.fn();
+  render(
+    <SpeakerSettings
+      voiceStatus="ready"
+      onRetryVoices={vi.fn()}
+      voices={shown}
+      voicesByKey={new Map(shown.map((voice) => [voice.key, voice]))}
+      languages={[{ code: "fr", label: "French", count: shown.length }]}
+      language="fr"
+      onLanguageChange={vi.fn()}
+      voiceOrder={voiceOrder}
+      onVoiceOrderChange={vi.fn()}
+      config={config}
+      onConfigChange={onConfigChange}
+      globalSpeed={1}
+      onGlobalSpeedChange={vi.fn()}
+      disabled={false}
+    />,
+  );
+  return onConfigChange;
+}
+
 function renderSettings(voiceOrder: VoiceOrder, config: SpeakerConfig = { mode: "random", selectedVoices: [] }) {
   const onVoiceOrderChange = vi.fn();
   const onConfigChange = vi.fn();
@@ -87,5 +110,33 @@ describe("SpeakerSettings voice sorting", () => {
       "Free tier · 1 credit per character",
       "Premium · 4 credits per character",
     ]);
+  });
+});
+
+describe("SpeakerSettings Follows speed", () => {
+  it("offers the option and reports it", () => {
+    const { onVoiceOrderChange } = renderSettings("name");
+    const options = [...screen.getByLabelText("Sort voices").querySelectorAll("option")].map((option) => option.textContent);
+    expect(options).toEqual(["By name", "By price, free tier first", "Follows speed, by price"]);
+    fireEvent.change(screen.getByLabelText("Sort voices"), { target: { value: "followsSpeed" } });
+    expect(onVoiceOrderChange).toHaveBeenCalledWith("followsSpeed");
+  });
+
+  it("lists only voices known to follow speed, and explains why", () => {
+    renderSettings("followsSpeed");
+    expect(screen.getAllByRole("checkbox").map((box) => box.closest("label")?.textContent)).toEqual(["Mélo (melotts)"]);
+    expect(screen.getByText(/Only voices a check found to follow the speed setting/)).not.toBeNull();
+  });
+
+  it("selects all of those, and only those", () => {
+    const onConfigChange = renderWith(voices, "followsSpeed", { mode: "roundRobin", selectedVoices: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Select all shown" }));
+    expect(onConfigChange).toHaveBeenCalledWith({ mode: "roundRobin", selectedVoices: ["melotts:FR"] });
+  });
+
+  it("says so when none of the shown voices follows speed", () => {
+    renderWith(voices.slice(0, 1), "followsSpeed", { mode: "random", selectedVoices: [] });
+    expect(screen.getByText("None of these voices is known to follow the speed setting.")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Select all shown" })).toHaveProperty("disabled", true);
   });
 });

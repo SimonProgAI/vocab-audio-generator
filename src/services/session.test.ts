@@ -190,6 +190,10 @@ describe("parseSession", () => {
     expect(parseSession({ items: [] })?.settings).toEqual({});
   });
 
+  it("restores the Follows speed order", () => {
+    expect(parseSession({ items: [], settings: { voiceOrder: "followsSpeed" } })?.settings).toEqual({ voiceOrder: "followsSpeed" });
+  });
+
   it("keeps the valid settings when others are broken", () => {
     expect(
       parseSession({

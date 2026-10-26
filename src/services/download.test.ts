@@ -82,6 +82,32 @@ describe("downloadItem", () => {
     expect(URL.createObjectURL).toHaveBeenCalledWith(audio);
   });
 
+  it("saves real MP3 even when TTS.ai sent WAV", async () => {
+    const header = new Uint8Array(44);
+    const view = new DataView(header.buffer);
+    [..."RIFF"].forEach((char, i) => view.setUint8(i, char.charCodeAt(0)));
+    [..."WAVEfmt "].forEach((char, i) => view.setUint8(8 + i, char.charCodeAt(0)));
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, 22050, true);
+    view.setUint32(28, 44100, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    [..."data"].forEach((char, i) => view.setUint8(36 + i, char.charCodeAt(0)));
+    const samples = new Int16Array(4410).map((_, i) => Math.round(Math.sin(i / 8) * 8000));
+    view.setUint32(40, samples.byteLength, true);
+    vi.mocked(downloadAudio).mockResolvedValue(new Blob([header, new Uint8Array(samples.buffer)], { type: "audio/mpeg" }));
+
+    await downloadItem(completed);
+
+    const saved = vi.mocked(URL.createObjectURL).mock.calls[0]?.[0] as Blob;
+    const head = new Uint8Array(await saved.slice(0, 4).arrayBuffer());
+    expect(saved.type).toBe("audio/mpeg");
+    expect(String.fromCharCode(...head)).not.toBe("RIFF");
+    expect(head[0]).toBe(0xff);
+  });
+
   it("revokes the object URL a minute later, once the browser has started the download", async () => {
     vi.mocked(downloadAudio).mockResolvedValue(audio);
     await downloadItem(completed);
