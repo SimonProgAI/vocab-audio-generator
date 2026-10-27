@@ -21,8 +21,8 @@
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import { setTimeout as sleep } from "node:timers/promises";
-import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { startedAsScript } from "./startedAsScript.ts";
 
 const API_ORIGIN = "https://api.tts.ai";
 const RESULTS_DIR = "benchmark-results";
@@ -618,10 +618,8 @@ async function main(): Promise<void> {
   console.log(`Saved ${base}.csv (summary) and ${base}.jsonl (every run, with TTS.ai's last reply).`);
 }
 
-// Run only when started as a script, not when the tests import this file. (import.meta.main says
-// the same, but only exists from Node 22.18 and 24.2.)
-const startedAsScript = process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url;
-if (startedAsScript) {
+// Run only when started as a script, not when the tests import this file.
+if (startedAsScript(import.meta.url)) {
   main().catch((error: unknown) => {
     console.error(describeError(error));
     process.exitCode = 1;

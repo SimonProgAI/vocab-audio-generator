@@ -9,6 +9,8 @@ API key: enter it in the box at the top of the page.
 
 ## Setup
 
+Needs Node 22.22 or newer (the GitHub Pages build uses Node 24).
+
 ```bash
 npm install
 npm run dev               # http://localhost:5173, then enter your key in the page

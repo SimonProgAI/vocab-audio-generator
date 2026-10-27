@@ -9,25 +9,31 @@
  * public/apple-touch-icon.png (full square: iOS rounds the corners itself).
  */
 import { writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
+import { startedAsScript } from "./startedAsScript.ts";
 
 /** Tailwind's blue-600, oklch(54.6% 0.245 262.881), as sRGB. */
 export const ICON_BLUE: readonly [number, number, number] = [0x15, 0x5d, 0xfc];
 
+/** The header icon's bars (App.tsx), in its 24-unit box. The tests check both places use it. */
+export const ICON_PATH = "M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4";
 /** Drawing units, as in favicon.svg: a 48-unit square with 9.6-unit corners (Tailwind's rounded-lg on 40 px). */
 const BOX = 48;
-const RADIUS = 9.6;
+export const ICON_RADIUS = 9.6;
 /** The header's 24-unit icon sits at half the square's size, centered. */
 const ICON_OFFSET = 12;
-/** Bars as x, top y, bottom y in the 24-unit icon (path M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4). */
-const BARS: ReadonlyArray<readonly [number, number, number]> = [
-  [4, 10, 14],
-  [8, 7, 17],
-  [12, 4, 20],
-  [16, 7, 17],
-  [20, 10, 14],
-];
+
+/** Bars as x, top y, bottom y: one "M x y v length" line each. Anything else in the path throws. */
+export function readBars(path: string): ReadonlyArray<readonly [number, number, number]> {
+  if (!/^(M\d+ \d+v\d+)+$/.test(path)) throw new Error(`Expected only vertical lines in the icon path: ${path}`);
+  return [...path.matchAll(/M(\d+) (\d+)v(\d+)/g)].map(([, x, top, length]) => [
+    Number(x),
+    Number(top),
+    Number(top) + Number(length),
+  ]);
+}
+
+const BARS = readBars(ICON_PATH);
 /** Half of stroke-width 2. Round caps, like stroke-linecap="round". */
 const HALF_STROKE = 1;
 
@@ -61,7 +67,7 @@ export function renderIcon(size: number, { rounded }: { rounded: boolean }): Uin
     for (let x = 0; x < size; x += 1) {
       const u = (x + 0.5) / scale;
       const v = (y + 0.5) / scale;
-      const square = clamp01(0.5 - squareDistance(u, v, rounded ? RADIUS : 0) * scale);
+      const square = clamp01(0.5 - squareDistance(u, v, rounded ? ICON_RADIUS : 0) * scale);
       const bar = clamp01(0.5 - barDistance(u, v) * scale);
       const at = (y * size + x) * 4;
       ICON_BLUE.forEach((channel, i) => {
@@ -100,6 +106,10 @@ export function encodePng(width: number, height: number, rgba: Uint8Array): Buff
   ]);
 }
 
+/** The repository root, so the icons land in public/ whichever folder the script is run from. */
+export const REPO_ROOT = new URL("../", import.meta.url);
+
+/** Paths are relative to the repository root. */
 export const ICON_FILES: ReadonlyArray<{ path: string; size: number; rounded: boolean }> = [
   { path: "public/favicon-32.png", size: 32, rounded: true },
   { path: "public/apple-touch-icon.png", size: 180, rounded: false },
@@ -107,11 +117,10 @@ export const ICON_FILES: ReadonlyArray<{ path: string; size: number; rounded: bo
 
 function main(): void {
   for (const { path, size, rounded } of ICON_FILES) {
-    writeFileSync(path, encodePng(size, size, renderIcon(size, { rounded })));
+    writeFileSync(new URL(path, REPO_ROOT), encodePng(size, size, renderIcon(size, { rounded })));
     console.log(`Wrote ${path} (${size}×${size})`);
   }
 }
 
 // Run only when started as a script, not when the tests import this file.
-const startedAsScript = process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url;
-if (startedAsScript) main();
+if (startedAsScript(import.meta.url)) main();

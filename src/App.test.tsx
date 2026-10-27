@@ -346,6 +346,23 @@ describe("Reset", () => {
   });
 });
 
+describe("Clear Queue", () => {
+  it("empties the queue but keeps the Bulk Import text, also after a reload", async () => {
+    const view = await openApp();
+    addWords("un champ", "une rivière");
+    fireEvent.change(screen.getByLabelText("Vocabulary list"), { target: { value: "une ferme\nun village" } });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear Queue" }));
+
+    expect(confirm).toHaveBeenCalledWith("Remove all 2 files from the queue?");
+    expect(screen.getByText(/Your queue is empty/)).not.toBeNull();
+    expect(screen.getByLabelText("Vocabulary list")).toHaveProperty("value", "une ferme\nun village");
+    await reload(view);
+    expect(screen.getByLabelText("Vocabulary list")).toHaveProperty("value", "une ferme\nun village");
+  });
+});
+
 describe("voice sorting", () => {
   it("groups every speaker list, including the queue rows, by price tier", async () => {
     await openApp();
