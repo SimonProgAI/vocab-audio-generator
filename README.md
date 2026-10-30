@@ -1,5 +1,35 @@
 # French Vocabulary Audio Generator
 
+## TL;DR
+
+- **What it is:** a browser-only React 19 + TypeScript app, built with Vite and styled with
+  Tailwind CSS 4. It turns a vocabulary list into one MP3 per word or phrase using the
+  [TTS.ai](https://tts.ai/api) API. Live at <https://simonprogai.github.io/vocab-audio-generator/>.
+- **No backend.** The page calls TTS.ai directly with the visitor's own API key, which stays in
+  their browser.
+- **How it's used:** paste one item per line → pick a speaker mode (Single Speaker, Per File,
+  Random Assignment, Round Robin) and a speed (0.5×–2.0×) → **Generate All** → **Play**,
+  **Download**, or **Download All (ZIP)**.
+- **Credits cost money,** so the app avoids paying twice. It never resubmits a job after a network
+  or server error, skips rows already made with the current settings, and checks on interrupted
+  jobs after a reload instead of submitting new ones.
+- **Voices:** only the French ones have been checked. 9 of the 17 French voices are hidden as
+  unreliable. Of the 8 left, only kokoro, melotts and piper follow the speed setting
+  (`src/utils/voices.ts`).
+- **Real MP3s:** piper and vits send WAV, which the browser converts to MP3 with `lamejs`
+  (LGPL-3.0, built into separate files).
+- **Persistence:** the queue, the Bulk Import text, the settings and the credit count survive a
+  reload in the same tab (`sessionStorage`). They're gone when the tab closes.
+- **Run it:** `npm install`, then `npm run dev`, then enter a TTS.ai key in the page. `npm test`
+  never calls TTS.ai or spends credits.
+- **Deploy:** every push to `main` is tested, built and published to GitHub Pages.
+- **Security:** never build a public copy with `VITE_TTS_API_KEY` set. Vite compiles it into the
+  JavaScript.
+- **Changing the code?** Read [AGENT_CONTEXT.md](AGENT_CONTEXT.md) first. The other project docs
+  are listed under [Project documentation](#project-documentation).
+
+## Overview
+
 Batch-generate MP3 vocabulary recordings with the [TTS.ai](https://tts.ai/api) API.
 Paste a word list, choose how voices are assigned, click **Generate All**, and download
 each file or the whole set as `vocabulary_audio.zip`.
@@ -7,9 +37,47 @@ each file or the whole set as `vocabulary_audio.zip`.
 Live version: <https://simonprogai.github.io/vocab-audio-generator/>. Bring your own TTS.ai
 API key: enter it in the box at the top of the page.
 
+The page has four numbered steps: **1 Bulk Import** (paste the list), **2 Speaker Settings**
+(assignment mode, voice language, Sort voices, global speed), **3 Queue** (each row's text,
+filename, speed and speaker, plus Play, Sample and Download) and **4 Progress**. A toolbar fixed
+to the bottom of the window holds **Generate All** (or **Stop**), the credit counter, **Download
+All (ZIP)** and **Clear Queue**. The header has **Reset**.
+
+## Goals
+
+There's no written product brief. These goals are inferred from the code, the interface text
+and the commit history (2026-10-23 to 2026-10-26):
+
+1. **One clean MP3 per vocabulary item**, named after its text (`une rivière` →
+   `une_riviere.mp3`), for French learning material.
+2. **Control over who speaks:** one voice for everything, a voice per row, a random mix from a
+   pool, or a fixed rotation, chosen from voices checked to speak French properly.
+3. **Slower speech for beginners:** 0.5× to 2.0×, for every file or per row.
+4. **Spend as few TTS.ai credits as possible,** and show what was spent.
+5. **Safe to host publicly:** no shared key and nothing secret in the build. Visitors bring
+   their own key.
+6. **Don't lose work:** a refresh or an accidental back navigation keeps everything.
+
+Out of scope, as far as the code shows: accounts, a server, keeping data after the tab closes,
+editing audio, and checking voices in languages other than French. Open questions about the
+goals are in [CURRENT_STATE.md](CURRENT_STATE.md#open-questions).
+
 ## Setup
 
-Needs Node 22.22 or newer (the GitHub Pages build uses Node 24).
+### Requirements
+
+- **Node.js 22.22.2 or newer** (`engines` in `package.json`; it's the minimum for Vitest and
+  jsdom). The GitHub Pages build uses Node 24. Development so far used Node 25 on Windows 11.
+- **npm.** CI installs with `npm ci` from `package-lock.json`.
+- **A TTS.ai API key** for real use, created in your TTS.ai account settings. Without one,
+  TTS.ai only allows limited anonymous use of its free voices.
+- **A current desktop browser.** The build targets ES2022. Web Workers, `sessionStorage` and
+  `localStorage` are used when they're available but aren't required. The queue table is 1,100
+  px wide and scrolls sideways on narrow screens. There's no record of testing particular
+  browsers.
+- **Network access** to `https://api.tts.ai` and to the audio file links it returns.
+
+### Install and run
 
 ```bash
 npm install
@@ -43,25 +111,93 @@ GitHub Pages workflow forces it empty. Visitors enter their own key instead, whi
 browser and is only sent to TTS.ai. TTS.ai accepts browser requests from any site (checked
 2026-10-25), so a hosted build calls `https://api.tts.ai` directly and needs no proxy.
 
-## How it works
+## High-level architecture
 
 ```
-src/
-├── App.tsx                 page layout and top-level state
-├── components/             BulkImport, SpeakerSettings, QueueTable, QueueRow,
-│                           ProgressPanel, Toolbar + small shared UI pieces
-├── services/
-│   ├── ttsApi.ts           the only module that talks to TTS.ai (retries, error mapping, parsing)
-│   ├── assignment.ts       speaker modes, validation, "is this row up to date?"
-│   └── download.ts         single MP3 + ZIP downloads
-├── hooks/
-│   ├── useQueue.ts         queue reducer (useReducer)
-│   ├── useVoices.ts        loads the voice list
-│   └── useGeneration.ts    submit → poll → update loop, with Stop
-├── utils/                  slugify, speed, voices, wait, format helpers
-├── test/                   MSW mock server + Vitest setup (tests sit next to their code)
-└── types/queue.ts          shared domain types
+Browser: static files from GitHub Pages, or the Vite dev server
+│
+├─ components/   UI only: gets data and callbacks as props
+├─ App.tsx       owns the page state and every event handler
+├─ hooks/        useQueue (queue reducer) · useGeneration (submit and poll loop) · useVoices
+│                useAudioPlayer (one clip at a time) · useSessionSaver (saving, 250 ms after changes stop)
+├─ services/     ttsApi (the only code that calls TTS.ai) · assignment · session · apiKey
+│                audio + wavToMp3 + mp3Worker (WAV → MP3) · download · voiceSample
+├─ utils/        pure helpers: the voice catalog, slugify, speed, credits, format, wait
+├─ sessionStorage                  the queue, Bulk Import text, settings and credit count
+└─ sessionStorage or localStorage  the visitor's API key
+        │
+        │  HTTPS with "Authorization: Bearer <key>"
+        │  npm run dev / preview: through the /tts-api proxy · hosted: straight to TTS.ai
+        ▼
+TTS.ai API, https://api.tts.ai/v1: GET /voices/ · POST /tts/ · GET /speech/results/?uuid=…
+plus the audio file links it returns (fetched without the key)
 ```
+
+- `src/App.tsx` is the only place that holds page state and starts side effects. Components
+  render what they're given and report what the user did.
+- Generating means submitting one job per row and polling TTS.ai until each finishes. A row
+  counts as done only while its audio matches the current speaker and speed.
+- Everything the page needs after a reload goes into one `sessionStorage` entry. Audio files
+  live in memory only and are fetched again from their links when needed.
+
+The full design is in [ARCHITECTURE.md](ARCHITECTURE.md), and the reasons behind it are in
+[DECISIONS.md](DECISIONS.md).
+
+## Directory structure
+
+```
+.
+├── .github/workflows/deploy-pages.yml   tests, builds and publishes to GitHub Pages on every push to main
+├── public/                         favicon.svg, favicon-32.png, apple-touch-icon.png
+│                                   (the PNGs are drawn by npm run icons)
+├── scripts/                        Node scripts, run as TypeScript without a build step
+│   ├── benchmark-voices.ts         npm run benchmark:voices (spends credits, asks first)
+│   ├── make-icons.ts               npm run icons
+│   └── startedAsScript.ts          "run main() only when started as a script" check
+├── src/
+│   ├── main.tsx                    entry point: StrictMode + ErrorBoundary + App
+│   ├── App.tsx                     page layout and top-level state; every event handler
+│   ├── index.css                   Tailwind import and page colors
+│   ├── components/                 BulkImport, SpeakerSettings, QueueTable, QueueRow,
+│   │                               ProgressPanel, Toolbar, ApiKeySettings, VoiceSelect,
+│   │                               CreditCounter + small shared UI pieces (Button, Section,
+│   │                               Notice, StatusBadge, Spinner, ErrorBoundary, fieldStyles)
+│   ├── hooks/
+│   │   ├── useQueue.ts             queue reducer (useReducer)
+│   │   ├── useGeneration.ts        submit → poll → update loop, with Stop and resuming
+│   │   ├── useVoices.ts            loads the voice list
+│   │   ├── useAudioPlayer.ts       plays one clip at a time
+│   │   └── useSessionSaver.ts      saves the session once changes pause
+│   ├── services/
+│   │   ├── ttsApi.ts               the only module that talks to TTS.ai (retries, error mapping, parsing)
+│   │   ├── assignment.ts           speaker modes, validation, "is this row up to date?"
+│   │   ├── session.ts              saves, loads and checks the tab's session
+│   │   ├── apiKey.ts               the visitor's API key (this tab, or remembered)
+│   │   ├── audio.ts                audio cache shared by Play, Download and the ZIP; WAV → MP3
+│   │   ├── wavToMp3.ts             WAV reader + MP3 encoder (lamejs)
+│   │   ├── mp3Worker.ts            runs wavToMp3 in a Web Worker
+│   │   ├── wavHeader.ts            "is this a WAV file?"
+│   │   ├── download.ts             single MP3 + ZIP downloads
+│   │   └── voiceSample.ts          the Sample button's short TTS jobs
+│   ├── utils/                      voices (hidden, tested, speed and price lists), slugify,
+│   │                               speed, credits, format, wait helpers
+│   ├── test/                       MSW mock server + Vitest setup + WAV builder
+│   │                               (tests sit next to their code)
+│   ├── types/queue.ts              shared domain types
+│   └── vite-env.d.ts               types for the VITE_* variables
+├── index.html                      page shell and icon links
+├── vite.config.ts                  relative base path, /tts-api proxy, test settings
+├── tsconfig*.json                  type checks for the app (src) and for Node (vite.config.ts, scripts)
+├── .env.example                    copy to .env for local development
+├── AGENTS.md                       read automatically by coding agents; points them to AGENT_CONTEXT.md
+├── ARCHITECTURE.md … SESSION_SUMMARY.md   project docs (see Project documentation)
+└── LICENSE                         MIT
+```
+
+Git-ignored, so they exist only on a developer's machine: `node_modules/`, `dist/` (the build),
+`.env`, `benchmark-results/` and `*.tsbuildinfo`.
+
+## How it works
 
 - **Generation**: jobs are submitted one at a time while a poller checks every active job
   about every 1.5 s, so early files finish while later ones are still being submitted. HTTP 429
@@ -185,6 +321,21 @@ One-time setup: in the repository's **Settings → Pages**, set **Source** to **
 The build sets `VITE_TTS_API_ORIGIN=https://api.tts.ai` and an empty `VITE_TTS_API_KEY`, so no
 key ships with the site. A key a visitor ticks **Remember** for is kept in `localStorage` for
 `<user>.github.io`, which every Pages site of that GitHub account shares.
+
+## Project documentation
+
+These files are the project's long-term memory. They're written so that someone with only this
+repository (a person or an AI agent) can pick up the work.
+
+| Document                                   | What's in it                                                                                    |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------- |
+| [ARCHITECTURE.md](ARCHITECTURE.md)         | Modules, component tree, state, data flows, the TTS.ai API as the code uses it, audio, build, tests |
+| [CURRENT_STATE.md](CURRENT_STATE.md)       | What works and how that was checked, what's partial, limitations, technical debt, open questions |
+| [DECISIONS.md](DECISIONS.md)               | Why things are built the way they are, the alternatives, and the assumptions                    |
+| [NEXT_STEPS.md](NEXT_STEPS.md)             | Suggested tasks in priority order, with their dependencies                                      |
+| [AGENT_CONTEXT.md](AGENT_CONTEXT.md)       | Rules, conventions and gotchas to know before changing anything                                 |
+| [AGENTS.md](AGENTS.md)                     | A short entry point that coding agents (Claude Code, Codex, Cursor and others) read on their own; it sends them to AGENT_CONTEXT.md |
+| [SESSION_SUMMARY.md](SESSION_SUMMARY.md)   | The latest analysis session: findings, risks, and the first thing to do next                    |
 
 ## Known issues
 
